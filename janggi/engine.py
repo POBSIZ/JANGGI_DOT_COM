@@ -3,21 +3,33 @@
 from typing import Optional, Dict, Tuple
 from .board import Board, Move, Side, PieceType
 from .nnue import NNUE, SimpleEvaluator
+from .zobrist import get_zobrist
+from .opening_book import get_opening_book, OpeningBook
 
 
 class Engine:
     """Janggi AI engine with optimized search."""
     
-    def __init__(self, depth: int = 3, use_nnue: bool = True, nnue_model_path: str = None):
+    def __init__(
+        self, 
+        depth: int = 3, 
+        use_nnue: bool = True, 
+        nnue_model_path: str = None,
+        use_opening_book: bool = True,
+        opening_book_path: str = "gibo"
+    ):
         """Initialize engine.
         
         Args:
             depth: Search depth for minimax
             use_nnue: Whether to use NNUE evaluator (if False, uses simple evaluator)
             nnue_model_path: Path to trained NNUE model file (optional)
+            use_opening_book: Whether to use opening book for early game
+            opening_book_path: Path to directory containing .gib files
         """
         self.depth = depth
         self.use_nnue = use_nnue
+        self.use_opening_book = use_opening_book
         
         if use_nnue:
             if nnue_model_path:
@@ -26,18 +38,38 @@ class Engine:
                 self.nnue = NNUE()
         else:
             self.nnue = None
+        
+        # Initialize opening book
+        if use_opening_book:
+            try:
+                self.opening_book = get_opening_book(opening_book_path)
+            except Exception as e:
+                print(f"Failed to load opening book: {e}")
+                self.opening_book = None
+        else:
+            self.opening_book = None
             
         self.evaluator = SimpleEvaluator()
         self.nodes_searched = 0
-        # Transposition table for caching evaluated positions
-        self.tt: Dict[str, Tuple[float, int]] = {}
+        self.used_opening_book = False  # Track if last move was from book
+        # Transposition table for caching evaluated positions (now uses Zobrist hash)
+        self.tt: Dict[int, Tuple[float, int]] = {}
         self.tt_hits = 0
+        self._zobrist = get_zobrist()
     
     def search(self, board: Board) -> Optional[Move]:
         """Search for best move using minimax with alpha-beta pruning."""
         self.nodes_searched = 0
         self.tt_hits = 0
+        self.used_opening_book = False
         self.tt.clear()  # Clear transposition table for new search
+        
+        # Try opening book first
+        if self.use_opening_book and self.opening_book:
+            book_move = self._get_book_move(board)
+            if book_move:
+                self.used_opening_book = True
+                return book_move
         
         moves = board.generate_moves()
         
@@ -165,17 +197,13 @@ class Engine:
             self.tt[board_hash] = (min_eval, depth)
             return min_eval
     
-    def _hash_board(self, board: Board) -> str:
-        """Create a simple hash of the board state."""
-        # Fast hash using board positions
-        parts = []
-        for rank in range(board.RANKS):
-            for file in range(board.FILES):
-                piece = board.board[rank][file]
-                if piece:
-                    parts.append(f"{file}{rank}{piece.side.value[0]}{piece.piece_type.value[0]}")
-        parts.append(board.side_to_move.value[0])
-        return "".join(parts)
+    def _hash_board(self, board: Board) -> int:
+        """Get Zobrist hash of the board state.
+        
+        Uses the board's cached Zobrist hash for O(1) lookup.
+        This is 2-3x faster than string-based hashing.
+        """
+        return board.get_zobrist_hash()
     
     def _evaluate(self, board: Board) -> float:
         """Evaluate board position."""
@@ -183,4 +211,77 @@ class Engine:
             return self.nnue.evaluate(board)
         else:
             return self.evaluator.evaluate(board)
+    
+    def _get_book_move(self, board: Board) -> Optional[Move]:
+        """Get a move from the opening book if available.
+        
+        Args:
+            board: Current board position
+            
+        Returns:
+            Move from opening book, or None if not in book
+        """
+        if not self.opening_book:
+            return None
+        
+        ply = len(board.move_history)
+        book_result = self.opening_book.get_book_move(
+            board.move_history, 
+            ply,
+            selection_method="weighted"
+        )
+        
+        if not book_result:
+            return None
+        
+        from_square, to_square = book_result
+        
+        # Convert notation to Move object
+        try:
+            files = "abcdefghi"
+            from_file = files.index(from_square[0])
+            from_rank = int(from_square[1:]) - 1
+            to_file = files.index(to_square[0])
+            to_rank = int(to_square[1:]) - 1
+            
+            move = Move(from_file, from_rank, to_file, to_rank)
+            
+            # Verify the move is legal
+            legal_moves = board.generate_moves()
+            for legal_move in legal_moves:
+                if (legal_move.from_file == move.from_file and 
+                    legal_move.from_rank == move.from_rank and
+                    legal_move.to_file == move.to_file and 
+                    legal_move.to_rank == move.to_rank):
+                    return legal_move
+            
+            return None
+            
+        except (ValueError, IndexError):
+            return None
+    
+    def is_in_opening_book(self, board: Board) -> bool:
+        """Check if the current position is in the opening book.
+        
+        Args:
+            board: Current board position
+            
+        Returns:
+            True if there are book moves available
+        """
+        if not self.opening_book:
+            return False
+        
+        ply = len(board.move_history)
+        return self.opening_book.is_in_book(board.move_history, ply)
+    
+    def get_opening_book_stats(self) -> Optional[Dict]:
+        """Get statistics about the opening book.
+        
+        Returns:
+            Dictionary with book statistics, or None if no book loaded
+        """
+        if not self.opening_book:
+            return None
+        return self.opening_book.get_statistics()
 

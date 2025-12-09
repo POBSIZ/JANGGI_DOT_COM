@@ -4,6 +4,14 @@ from enum import Enum
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 
+from .zobrist import get_zobrist
+from .bitboard import (
+    BitBoard, AttackTables,
+    get_pawn_attacks, get_king_attacks, get_guard_attacks,
+    get_horse_attacks, get_elephant_attacks,
+    square_to_bit, bit_to_square, is_bit_set, iter_squares, popcount,
+)
+
 
 class Side(Enum):
     """Player sides."""
@@ -85,7 +93,13 @@ class Board:
         ]
         self.side_to_move = Side.CHO
         self.move_history: List[Dict[str, str]] = []  # Track move history
-        self.position_history: List[str] = []  # Track position hashes for repetition detection
+        self.position_history: List[int] = []  # Track position hashes for repetition detection (Zobrist)
+        self._zobrist = get_zobrist()
+        self._current_hash: int = 0  # Current Zobrist hash (computed lazily)
+        
+        # BitBoard for fast move generation (synced with main board)
+        self._bitboard: Optional[BitBoard] = None
+        self._use_bitboard: bool = True  # Toggle for bitboard optimization
         if custom_setup:
             self._initialize_custom_position(custom_setup)
         elif han_formation is not None or cho_formation is not None:
@@ -97,9 +111,12 @@ class Board:
         else:
             self._initialize_starting_position()
         
-        # Record initial position for repetition detection
-        initial_hash = self._get_position_hash()
-        self.position_history.append(initial_hash)
+        # Compute initial Zobrist hash and record for repetition detection
+        self._current_hash = self._zobrist.compute_hash(self)
+        self.position_history.append(self._current_hash)
+        
+        # Initialize bitboard for fast operations
+        self._sync_bitboard()
 
     def _initialize_starting_position(self):
         """Set up the starting position."""
@@ -494,6 +511,50 @@ class Board:
             return self.board[rank][file]
         return None
 
+    def _sync_bitboard(self) -> None:
+        """Sync BitBoard with the main board representation."""
+        if not self._use_bitboard:
+            return
+        
+        self._bitboard = BitBoard()
+        for rank in range(self.RANKS):
+            for file in range(self.FILES):
+                piece = self.board[rank][file]
+                if piece:
+                    self._bitboard.set_piece(piece.side.value, piece.piece_type.value, file, rank)
+    
+    def get_bitboard(self) -> Optional[BitBoard]:
+        """Get the current BitBoard (read-only access)."""
+        return self._bitboard
+    
+    def _update_bitboard_move(self, piece: Piece, from_file: int, from_rank: int, 
+                               to_file: int, to_rank: int, captured: Optional[Piece]) -> None:
+        """Incrementally update bitboard after a move."""
+        if not self._use_bitboard or not self._bitboard:
+            return
+        
+        # Remove captured piece if any
+        if captured:
+            self._bitboard.clear_piece(captured.side.value, captured.piece_type.value, to_file, to_rank)
+        
+        # Move the piece
+        self._bitboard.clear_piece(piece.side.value, piece.piece_type.value, from_file, from_rank)
+        self._bitboard.set_piece(piece.side.value, piece.piece_type.value, to_file, to_rank)
+    
+    def _revert_bitboard_move(self, piece: Piece, from_file: int, from_rank: int,
+                               to_file: int, to_rank: int, captured: Optional[Piece]) -> None:
+        """Revert bitboard after undoing a move."""
+        if not self._use_bitboard or not self._bitboard:
+            return
+        
+        # Move piece back
+        self._bitboard.clear_piece(piece.side.value, piece.piece_type.value, to_file, to_rank)
+        self._bitboard.set_piece(piece.side.value, piece.piece_type.value, from_file, from_rank)
+        
+        # Restore captured piece if any
+        if captured:
+            self._bitboard.set_piece(captured.side.value, captured.piece_type.value, to_file, to_rank)
+
     def make_move(self, move: Move) -> bool:
         """Make a move. Returns True if legal, False otherwise."""
         # Check bounds first
@@ -563,9 +624,23 @@ class Board:
         self.move_history.append(move_record)
         self.side_to_move = Side.CHO if self.side_to_move == Side.HAN else Side.HAN
         
-        # Record position hash for repetition detection
-        position_hash = self._get_position_hash()
-        self.position_history.append(position_hash)
+        # Update Zobrist hash incrementally
+        self._current_hash = self._zobrist.update_hash_move(
+            self._current_hash,
+            piece.side.value,
+            piece.piece_type.value,
+            move.from_file,
+            move.from_rank,
+            move.to_file,
+            move.to_rank,
+            captured_piece.side.value if captured_piece else None,
+            captured_piece.piece_type.value if captured_piece else None,
+        )
+        self.position_history.append(self._current_hash)
+        
+        # Update bitboard incrementally
+        self._update_bitboard_move(piece, move.from_file, move.from_rank, 
+                                   move.to_file, move.to_rank, captured_piece)
         
         # Return captured piece for undo capability
         move.captured_piece = captured_piece
@@ -579,9 +654,18 @@ class Board:
         self.side_to_move = Side.CHO if self.side_to_move == Side.HAN else Side.HAN
         if self.move_history:
             self.move_history.pop()
-        # Remove last position hash
+        # Remove last position hash and restore previous hash
         if self.position_history:
             self.position_history.pop()
+            if self.position_history:
+                self._current_hash = self.position_history[-1]
+            else:
+                # Recompute if no history (shouldn't happen in normal use)
+                self._current_hash = self._zobrist.compute_hash(self)
+        
+        # Revert bitboard
+        self._revert_bitboard_move(piece, move.from_file, move.from_rank,
+                                   move.to_file, move.to_rank, move.captured_piece)
 
     def make_move_fast(self, move: Move) -> bool:
         """Fast make_move for AI search - skips history recording.
@@ -619,9 +703,23 @@ class Board:
                 self.side_to_move = original_side
                 return False
         
-        # Record position hash for repetition detection
-        position_hash = self._get_position_hash()
-        self.position_history.append(position_hash)
+        # Update Zobrist hash incrementally (fast)
+        self._current_hash = self._zobrist.update_hash_move(
+            self._current_hash,
+            piece.side.value,
+            piece.piece_type.value,
+            move.from_file,
+            move.from_rank,
+            move.to_file,
+            move.to_rank,
+            captured_piece.side.value if captured_piece else None,
+            captured_piece.piece_type.value if captured_piece else None,
+        )
+        self.position_history.append(self._current_hash)
+        
+        # Update bitboard incrementally
+        self._update_bitboard_move(piece, move.from_file, move.from_rank,
+                                   move.to_file, move.to_rank, captured_piece)
         
         move.captured_piece = captured_piece
         return True
@@ -632,9 +730,15 @@ class Board:
         self.board[move.from_rank][move.from_file] = piece
         self.board[move.to_rank][move.to_file] = move.captured_piece
         self.side_to_move = Side.CHO if self.side_to_move == Side.HAN else Side.HAN
-        # Remove last position hash
+        # Remove last position hash and restore previous hash
         if self.position_history:
             self.position_history.pop()
+            if self.position_history:
+                self._current_hash = self.position_history[-1]
+        
+        # Revert bitboard
+        self._revert_bitboard_move(piece, move.from_file, move.from_rank,
+                                   move.to_file, move.to_rank, move.captured_piece)
 
     def is_legal_move(self, move: Move) -> bool:
         """Check if a move is legal."""
@@ -1044,7 +1148,19 @@ class Board:
         return False
 
     def generate_moves(self) -> List[Move]:
-        """Generate all legal moves for the side to move."""
+        """Generate all legal moves for the side to move.
+        
+        Uses bitboard for fast piece location when available.
+        """
+        # Use bitboard-optimized generation if available
+        if self._use_bitboard and self._bitboard:
+            return self._generate_moves_bitboard()
+        
+        # Fallback to traditional generation
+        return self._generate_moves_traditional()
+    
+    def _generate_moves_traditional(self) -> List[Move]:
+        """Traditional move generation (original method)."""
         moves = []
         for rank in range(self.RANKS):
             for file in range(self.FILES):
@@ -1058,6 +1174,77 @@ class Board:
             if self._would_be_legal(move):
                 legal_moves.append(move)
 
+        return legal_moves
+    
+    def _generate_moves_bitboard(self) -> List[Move]:
+        """Bitboard-optimized move generation.
+        
+        Uses bitboard to quickly iterate over pieces and pre-computed
+        attack tables for fast move candidate generation.
+        """
+        bb = self._bitboard
+        side = self.side_to_move.value
+        own_pieces = bb.get_all_pieces(side)
+        enemy_pieces = bb.get_all_pieces('HAN' if side == 'CHO' else 'CHO')
+        all_pieces = bb._all_pieces
+        
+        moves = []
+        
+        # Generate moves for each piece type using bitboard positions
+        for piece_type in ['KING', 'GUARD', 'ELEPHANT', 'HORSE', 'ROOK', 'CANNON', 'PAWN']:
+            piece_bb = bb.pieces[side][piece_type]
+            
+            for file, rank in iter_squares(piece_bb):
+                piece = self.get_piece(file, rank)
+                if piece is None:
+                    continue
+                
+                # Generate candidate moves based on piece type
+                if piece_type == 'PAWN':
+                    attack_bb = get_pawn_attacks(file, rank, side)
+                    # Filter: can't capture own pieces
+                    valid_moves = attack_bb & ~own_pieces
+                    for to_file, to_rank in iter_squares(valid_moves):
+                        moves.append(Move(file, rank, to_file, to_rank))
+                        
+                elif piece_type == 'KING':
+                    attack_bb = get_king_attacks(file, rank, side)
+                    valid_moves = attack_bb & ~own_pieces
+                    # Filter to palace
+                    for to_file, to_rank in iter_squares(valid_moves):
+                        if self.is_in_palace(to_file, to_rank, self.side_to_move):
+                            moves.append(Move(file, rank, to_file, to_rank))
+                            
+                elif piece_type == 'GUARD':
+                    attack_bb = get_guard_attacks(file, rank, side)
+                    valid_moves = attack_bb & ~own_pieces
+                    for to_file, to_rank in iter_squares(valid_moves):
+                        if self.is_in_palace(to_file, to_rank, self.side_to_move):
+                            moves.append(Move(file, rank, to_file, to_rank))
+                            
+                elif piece_type == 'HORSE':
+                    attack_bb = get_horse_attacks(file, rank, all_pieces)
+                    valid_moves = attack_bb & ~own_pieces
+                    for to_file, to_rank in iter_squares(valid_moves):
+                        moves.append(Move(file, rank, to_file, to_rank))
+                        
+                elif piece_type == 'ELEPHANT':
+                    attack_bb = get_elephant_attacks(file, rank, all_pieces)
+                    valid_moves = attack_bb & ~own_pieces
+                    for to_file, to_rank in iter_squares(valid_moves):
+                        moves.append(Move(file, rank, to_file, to_rank))
+                        
+                else:
+                    # ROOK and CANNON use traditional generation for now
+                    # (sliding pieces need more complex bitboard magic)
+                    moves.extend(self._generate_moves_for_piece(file, rank, piece))
+        
+        # Filter out moves that leave own king in check
+        legal_moves = []
+        for move in moves:
+            if self._would_be_legal(move):
+                legal_moves.append(move)
+        
         return legal_moves
 
     def _generate_moves_for_piece(
@@ -1519,22 +1706,24 @@ class Board:
                     return (file, rank)
         return None
 
-    def _get_position_hash(self) -> str:
-        """Generate a hash of the current board position including side to move.
+    def _get_position_hash(self) -> int:
+        """Get the current Zobrist hash of the board position.
         
         This hash uniquely identifies a position (board state + side to move).
-        Used for repetition detection.
+        Used for repetition detection and transposition tables.
+        
+        Returns:
+            64-bit Zobrist hash integer
         """
-        parts = []
-        # Add all piece positions
-        for rank in range(self.RANKS):
-            for file in range(self.FILES):
-                piece = self.board[rank][file]
-                if piece:
-                    parts.append(f"{file}{rank}{piece.side.value[0]}{piece.piece_type.value[0]}")
-        # Add side to move (critical for repetition detection)
-        parts.append(self.side_to_move.value[0])
-        return "|".join(parts)
+        return self._current_hash
+    
+    def get_zobrist_hash(self) -> int:
+        """Get the current Zobrist hash (public API).
+        
+        Returns:
+            64-bit Zobrist hash of current position
+        """
+        return self._current_hash
 
     def is_repetition(self, count: int = 3) -> bool:
         """Check if the current position has been repeated a certain number of times.
