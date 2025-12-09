@@ -48,6 +48,8 @@ os.environ["NNUE_MODEL_PATH"] = "models/nnue_gpu_iter_5.json"
 2. `models/nnue_gpu_model.json`
 3. `models/nnue_model.json`
 
+**참고**: 스마트 학습으로 생성된 `models/nnue_smart_model.json`을 사용하려면 환경 변수로 지정하세요.
+
 ## 2. Python 코드에서 직접 사용
 
 ### Engine 클래스 사용
@@ -93,6 +95,10 @@ print(f"Position evaluation: {evaluation}")
 
 현재 `models/` 디렉토리에 있는 모델들:
 
+### 스마트 학습 모델 (🆕)
+
+- `nnue_smart_model.json` - 스마트 학습으로 생성된 모델 (시스템 최적화)
+
 ### 자기대전 학습 모델
 
 - `nnue_gpu_model.json` - GPU 기본 학습 모델
@@ -107,6 +113,7 @@ print(f"Position evaluation: {evaluation}")
 
 | 모델 | 특징 | 권장 용도 |
 |------|------|-----------|
+| `nnue_smart_model.json` | 🆕 시스템 최적화, 자동 설정 | **권장** - 가장 쉬운 방법 |
 | `nnue_gibo_model.json` | 실전 기보 기반, 현실적 평가 | 일반 게임 |
 | `nnue_gpu_iter_5.json` | 가장 많은 자기대전 학습 | 강한 AI |
 | `nnue_gpu_model.json` | 기본 GPU 학습 | 빠른 테스트 |

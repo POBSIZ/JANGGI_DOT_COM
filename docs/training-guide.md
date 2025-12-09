@@ -52,30 +52,99 @@ Hidden Layer 2 (64 뉴런, Clipped ReLU)
 
 ## 환경 설정
 
-### 1. 기본 의존성 설치
+### 1. Python 버전 확인
+
+이 프로젝트는 **Python 3.10 ~ 3.12**를 지원합니다. PyTorch CUDA 버전은 Windows에서 Python 3.12까지만 지원하므로, GPU 학습을 원하는 경우 Python 3.12를 권장합니다.
+
+```bash
+# Python 버전 확인
+uv run python --version
+
+# Python 3.12로 고정 (권장)
+uv python pin 3.12
+```
+
+### 2. 기본 의존성 설치
 
 ```bash
 uv sync
 ```
 
-### 2. GPU 학습을 위한 PyTorch 설치
+### 3. GPU 학습을 위한 PyTorch 설치
+
+#### NVIDIA GPU (CUDA) - Windows/Linux
 
 ```bash
-# NVIDIA GPU (CUDA)
-pip install torch
+# CUDA 12.1 지원 버전 설치 (권장)
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# Apple Silicon (M1/M2/M3)
-pip install torch
-
-# CPU만 사용
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+# 또는 CUDA 11.8 지원 버전
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-### 3. 확인
+**중요**: 기본 `pip install torch`는 CPU-only 버전을 설치할 수 있습니다. GPU를 사용하려면 위의 CUDA 인덱스 URL을 사용하세요.
+
+#### Apple Silicon (M1/M2/M3)
 
 ```bash
-python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}, MPS: {torch.backends.mps.is_available()}')"
+# MPS (Metal Performance Shaders) 지원 버전
+uv pip install torch torchvision torchaudio
 ```
+
+#### CPU만 사용
+
+```bash
+# CPU-only 버전
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+### 4. GPU 설치 확인
+
+```bash
+# GPU 감지 확인
+uv run python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'Device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU\"}')"
+
+# 또는 스마트 학습 스크립트로 확인
+uv run python scripts/smart_train.py --info-only
+```
+
+**예상 출력 (GPU 사용 가능 시)**:
+```
+PyTorch: 2.5.1+cu121
+CUDA available: True
+Device: NVIDIA GeForce RTX 3060
+```
+
+**예상 출력 (GPU 사용 불가 시)**:
+```
+PyTorch: 2.9.1+cpu
+CUDA available: False
+Device: CPU
+```
+
+### 5. GPU 감지 문제 해결
+
+GPU가 감지되지 않는 경우:
+
+1. **PyTorch CPU-only 버전이 설치된 경우**:
+   ```bash
+   uv pip uninstall torch torchvision torchaudio
+   uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+   ```
+
+2. **CUDA 드라이버 확인**:
+   - NVIDIA GPU: [NVIDIA 드라이버](https://www.nvidia.com/Download/index.aspx) 설치 확인
+   - `nvidia-smi` 명령어로 GPU 인식 확인
+
+3. **Python 버전 확인**:
+   - Windows에서 CUDA 지원은 Python 3.12까지만 가능
+   - `uv python pin 3.12`로 버전 고정
+
+4. **스마트 학습 스크립트로 자동 진단**:
+   ```bash
+   uv run python scripts/smart_train.py --info-only
+   ```
+   이 명령어는 GPU 감지 문제의 원인을 자동으로 진단하고 해결 방법을 제시합니다.
 
 ---
 
@@ -84,13 +153,13 @@ python -c "import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda
 ### 가장 간단한 학습 (1-2분)
 
 ```bash
-python scripts/train_nnue_gpu.py --positions 5000 --epochs 50 --skip-eval
+uv run python scripts/train_nnue_gpu.py --positions 5000 --epochs 50 --skip-eval
 ```
 
 ### 권장 학습 (3-5분)
 
 ```bash
-python scripts/train_nnue_gpu.py --parallel --positions 10000 --epochs 100
+uv run python scripts/train_nnue_gpu.py --parallel --positions 10000 --epochs 100
 ```
 
 ### 학습된 모델 확인
@@ -108,7 +177,7 @@ ls -la models/nnue_gpu_model.json
 ### 대화형 모드 (추천)
 
 ```bash
-python scripts/smart_train.py
+uv run python scripts/smart_train.py
 ```
 
 실행하면 다음 순서로 진행됩니다:
@@ -131,19 +200,19 @@ python scripts/smart_train.py
 
 ```bash
 # 표준 학습 (약 15분)
-python scripts/smart_train.py --time standard
+uv run python scripts/smart_train.py --time standard
 
 # 깊은 학습 (약 30분)
-python scripts/smart_train.py --time deep
+uv run python scripts/smart_train.py --time deep
 
 # 기보 파일 없이 학습
-python scripts/smart_train.py --time standard --no-gibo
+uv run python scripts/smart_train.py --time standard --no-gibo
 
 # 기존 모델에서 계속 학습
-python scripts/smart_train.py --time deep --load models/nnue_model.json
+uv run python scripts/smart_train.py --time deep --load models/nnue_model.json
 
-# 시스템 정보만 확인
-python scripts/smart_train.py --info-only
+# 시스템 정보만 확인 (GPU 감지 진단)
+uv run python scripts/smart_train.py --info-only
 ```
 
 ### 자동 최적화 기능
@@ -151,6 +220,7 @@ python scripts/smart_train.py --info-only
 스마트 학습은 시스템에 따라 자동으로 설정을 조정합니다:
 
 - **GPU 감지**: CUDA 또는 Apple Silicon (MPS) GPU가 있으면 자동으로 GPU 학습
+  - GPU가 감지되지 않으면 자동으로 원인 진단 및 해결 방법 제시
 - **메모리 최적화**: RAM/VRAM 크기에 따라 배치 크기 자동 조절
 - **병렬 처리**: CPU 코어 수에 따라 데이터 생성 병렬화
 - **기보 활용**: 기보 파일이 있으면 자동으로 기보 기반 학습 포함
@@ -194,7 +264,7 @@ python scripts/smart_train.py --info-only
 GPU를 사용한 빠른 학습입니다.
 
 ```bash
-python scripts/train_nnue_gpu.py [옵션]
+uv run python scripts/train_nnue_gpu.py [옵션]
 ```
 
 #### 주요 옵션
@@ -213,13 +283,13 @@ python scripts/train_nnue_gpu.py [옵션]
 
 ```bash
 # 빠른 테스트
-python scripts/train_nnue_gpu.py --positions 5000 --epochs 30 --skip-eval
+uv run python scripts/train_nnue_gpu.py --positions 5000 --epochs 30 --skip-eval
 
 # 표준 학습
-python scripts/train_nnue_gpu.py --parallel --positions 20000 --epochs 100
+uv run python scripts/train_nnue_gpu.py --parallel --positions 20000 --epochs 100
 
 # 대용량 학습
-python scripts/train_nnue_gpu.py --parallel --positions 100000 --epochs 200 --batch-size 512
+uv run python scripts/train_nnue_gpu.py --parallel --positions 100000 --epochs 200 --batch-size 512
 ```
 
 ### 2. CPU 학습
@@ -227,7 +297,7 @@ python scripts/train_nnue_gpu.py --parallel --positions 100000 --epochs 200 --ba
 GPU가 없는 환경에서 사용합니다.
 
 ```bash
-python scripts/train_nnue.py [옵션]
+uv run python scripts/train_nnue.py [옵션]
 ```
 
 #### 주요 옵션
@@ -243,13 +313,13 @@ python scripts/train_nnue.py [옵션]
 
 ```bash
 # 자기대전 학습
-python scripts/train_nnue.py --method selfplay --games 100 --epochs 30
+uv run python scripts/train_nnue.py --method selfplay --games 100 --epochs 30
 
 # 깊은 탐색 학습 (권장)
-python scripts/train_nnue.py --method deepsearch --positions 5000 --epochs 50
+uv run python scripts/train_nnue.py --method deepsearch --positions 5000 --epochs 50
 
 # 반복 자기 개선
-python scripts/train_nnue.py --method iterative --iterations 5
+uv run python scripts/train_nnue.py --method iterative --iterations 5
 ```
 
 ### 3. 기보 학습 (신규)
@@ -257,7 +327,7 @@ python scripts/train_nnue.py --method iterative --iterations 5
 실제 대국 기보 파일(.gib)을 사용하여 학습합니다. 고수들의 실전 데이터로 학습하므로 더 현실적인 평가 함수를 만들 수 있습니다.
 
 ```bash
-python scripts/train_nnue_gibo.py [옵션]
+uv run python scripts/train_nnue_gibo.py [옵션]
 ```
 
 #### 주요 옵션
@@ -276,16 +346,16 @@ python scripts/train_nnue_gibo.py [옵션]
 
 ```bash
 # 기본 기보 학습
-python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30
 
 # 낮은 학습률로 안정적 학습
-python scripts/train_nnue_gibo.py --gibo-dir gibo --lr 0.0001 --epochs 50
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo --lr 0.0001 --epochs 50
 
 # 기존 모델에서 fine-tuning
-python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gpu_model.json --epochs 20
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gpu_model.json --epochs 20
 
 # 상세 설정
-python scripts/train_nnue_gibo.py \
+uv run python scripts/train_nnue_gibo.py \
     --gibo-dir gibo \
     --epochs 50 \
     --lr 0.0001 \
@@ -312,7 +382,7 @@ python scripts/train_nnue_gibo.py \
 모델이 자기 자신과 대전하면서 점진적으로 개선됩니다.
 
 ```bash
-python scripts/train_nnue_gpu.py --method iterative --iterations 10 --games-per-iter 100
+uv run python scripts/train_nnue_gpu.py --method iterative --iterations 10 --games-per-iter 100
 ```
 
 ---
@@ -333,10 +403,10 @@ CPU 코어를 활용해 데이터 생성을 병렬화합니다.
 
 ```bash
 # 자동 (CPU 코어 수 - 1)
-python scripts/train_nnue_gpu.py --parallel --positions 50000
+uv run python scripts/train_nnue_gpu.py --parallel --positions 50000
 
 # 워커 수 지정
-python scripts/train_nnue_gpu.py --parallel --workers 4 --positions 50000
+uv run python scripts/train_nnue_gpu.py --parallel --workers 4 --positions 50000
 ```
 
 ### 학습률 조절
@@ -345,10 +415,10 @@ NaN 문제가 발생하면 학습률을 낮추세요.
 
 ```bash
 # 안정적인 학습
-python scripts/train_nnue_gpu.py --lr 0.0003
+uv run python scripts/train_nnue_gpu.py --lr 0.0003
 
 # 매우 안정적
-python scripts/train_nnue_gpu.py --lr 0.0001
+uv run python scripts/train_nnue_gpu.py --lr 0.0001
 ```
 
 ---
@@ -368,10 +438,10 @@ python scripts/train_nnue_gpu.py --lr 0.0001
 
 ```bash
 # 학습률 낮추기
-python scripts/train_nnue_gpu.py --lr 0.0001 --positions 10000
+uv run python scripts/train_nnue_gpu.py --lr 0.0001 --positions 10000
 
 # 또는 배치 크기 줄이기
-python scripts/train_nnue_gpu.py --batch-size 128 --lr 0.0003
+uv run python scripts/train_nnue_gpu.py --batch-size 128 --lr 0.0003
 ```
 
 ### 학습이 너무 느림
@@ -382,10 +452,10 @@ python scripts/train_nnue_gpu.py --batch-size 128 --lr 0.0003
 
 ```bash
 # 병렬 데이터 생성 사용
-python scripts/train_nnue_gpu.py --parallel --positions 10000
+uv run python scripts/train_nnue_gpu.py --parallel --positions 10000
 
 # 또는 평가 건너뛰기
-python scripts/train_nnue_gpu.py --skip-eval
+uv run python scripts/train_nnue_gpu.py --skip-eval
 ```
 
 ### 메모리 부족
@@ -396,16 +466,50 @@ python scripts/train_nnue_gpu.py --skip-eval
 
 ```bash
 # 배치 크기 줄이기
-python scripts/train_nnue_gpu.py --batch-size 64
+uv run python scripts/train_nnue_gpu.py --batch-size 64
 ```
 
 ### PyTorch 설치 오류
 
 ```bash
-# PyTorch 재설치
-pip uninstall torch
-pip install torch
+# PyTorch 재설치 (CUDA 버전)
+uv pip uninstall torch torchvision torchaudio
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
+
+### GPU가 감지되지 않는 경우
+
+**증상**: `GPU: 사용 불가 (CPU 학습 모드)` 메시지가 표시됨
+
+**원인 및 해결**:
+
+1. **PyTorch CPU-only 버전 설치됨**:
+   ```bash
+   # 현재 버전 확인
+   uv run python -c "import torch; print(torch.__version__)"
+   # 출력에 "+cpu"가 포함되어 있으면 CPU-only 버전
+   
+   # CUDA 버전으로 교체
+   uv pip uninstall torch torchvision torchaudio
+   uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+   ```
+
+2. **Python 버전 문제 (Windows)**:
+   ```bash
+   # Python 3.12로 고정 (CUDA 지원)
+   uv python pin 3.12
+   uv sync --extra gpu
+   ```
+
+3. **CUDA 드라이버 미설치**:
+   - [NVIDIA 드라이버 다운로드](https://www.nvidia.com/Download/index.aspx)
+   - `nvidia-smi` 명령어로 확인
+
+4. **자동 진단**:
+   ```bash
+   uv run python scripts/smart_train.py --info-only
+   ```
+   이 명령어는 문제 원인을 자동으로 진단하고 해결 방법을 제시합니다.
 
 ### 기보 파싱 오류
 
@@ -430,10 +534,10 @@ pip install torch
 **해결**:
 ```bash
 # 낮은 학습률 사용 (권장)
-python scripts/train_nnue_gibo.py --lr 0.0001 --batch-size 128
+uv run python scripts/train_nnue_gibo.py --lr 0.0001 --batch-size 128
 
 # 또는 더 작은 배치 크기
-python scripts/train_nnue_gibo.py --lr 0.00005 --batch-size 64
+uv run python scripts/train_nnue_gibo.py --lr 0.00005 --batch-size 64
 ```
 
 ---
@@ -443,7 +547,7 @@ python scripts/train_nnue_gibo.py --lr 0.00005 --batch-size 64
 ### 기존 모델 이어서 학습
 
 ```bash
-python scripts/train_nnue_gpu.py --load models/nnue_gpu_model.json --positions 20000 --output models/nnue_v2.json
+uv run python scripts/train_nnue_gpu.py --load models/nnue_gpu_model.json --positions 20000 --output models/nnue_v2.json
 ```
 
 ### PyTorch 형식으로 저장
@@ -451,44 +555,44 @@ python scripts/train_nnue_gpu.py --load models/nnue_gpu_model.json --positions 2
 더 효율적인 저장/로드를 위해 .pt 형식을 사용할 수 있습니다.
 
 ```bash
-python scripts/train_nnue_gpu.py --output models/model.json --output-torch models/model.pt
+uv run python scripts/train_nnue_gpu.py --output models/model.json --output-torch models/model.pt
 ```
 
 ### 특정 디바이스 지정
 
 ```bash
 # CUDA GPU
-python scripts/train_nnue_gpu.py --device cuda
+uv run python scripts/train_nnue_gpu.py --device cuda
 
 # Apple Silicon
-python scripts/train_nnue_gpu.py --device mps
+uv run python scripts/train_nnue_gpu.py --device mps
 
 # CPU
-python scripts/train_nnue_gpu.py --device cpu
+uv run python scripts/train_nnue_gpu.py --device cpu
 ```
 
 ### 네트워크 구조 변경
 
 ```bash
 # 더 큰 네트워크
-python scripts/train_nnue_gpu.py --feature-size 1024 --hidden1 512 --hidden2 128
+uv run python scripts/train_nnue_gpu.py --feature-size 1024 --hidden1 512 --hidden2 128
 
 # 더 작은 네트워크 (빠른 추론)
-python scripts/train_nnue_gpu.py --feature-size 256 --hidden1 128 --hidden2 32
+uv run python scripts/train_nnue_gpu.py --feature-size 256 --hidden1 128 --hidden2 32
 ```
 
 ### 기보 학습 고급 설정
 
 ```bash
 # 게임당 더 많은 포지션 추출
-python scripts/train_nnue_gibo.py --positions-per-game 100 --gibo-dir gibo
+uv run python scripts/train_nnue_gibo.py --positions-per-game 100 --gibo-dir gibo
 
 # 특정 디바이스 사용
-python scripts/train_nnue_gibo.py --device cuda --gibo-dir gibo
+uv run python scripts/train_nnue_gibo.py --device cuda --gibo-dir gibo
 
 # 여러 기보 디렉토리 사용 (여러 번 실행)
-python scripts/train_nnue_gibo.py --gibo-dir gibo1 --output models/model_v1.json
-python scripts/train_nnue_gibo.py --gibo-dir gibo2 --load models/model_v1.json --output models/model_v2.json
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo1 --output models/model_v1.json
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo2 --load models/model_v1.json --output models/model_v2.json
 ```
 
 ---
@@ -525,10 +629,10 @@ curl http://localhost:8000/api/model-info
 
 ```bash
 # 대화형 모드 - 메뉴에서 선택
-python scripts/smart_train.py
+uv run python scripts/smart_train.py
 
 # 또는 직접 시간 지정
-python scripts/smart_train.py --time deep
+uv run python scripts/smart_train.py --time deep
 ```
 
 ### 방법 A: 자기대전 학습 (기보 없이)
@@ -536,13 +640,13 @@ python scripts/smart_train.py --time deep
 #### 1단계: 빠른 테스트
 
 ```bash
-python scripts/train_nnue_gpu.py --positions 5000 --epochs 30 --skip-eval
+uv run python scripts/train_nnue_gpu.py --positions 5000 --epochs 30 --skip-eval
 ```
 
 #### 2단계: 기본 학습
 
 ```bash
-python scripts/train_nnue_gpu.py --parallel --positions 30000 --epochs 100
+uv run python scripts/train_nnue_gpu.py --parallel --positions 30000 --epochs 100
 ```
 
 #### 3단계: 반복 개선
@@ -558,13 +662,13 @@ python scripts/train_nnue_gpu.py --method iterative --iterations 5 --load models
 #### 1단계: 기보 학습
 
 ```bash
-python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30 --lr 0.0001
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30 --lr 0.0001
 ```
 
 #### 2단계: Fine-tuning
 
 ```bash
-python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gibo_model.json --epochs 20 --lr 0.00005
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gibo_model.json --epochs 20 --lr 0.00005
 ```
 
 #### 3단계: 반복 개선 (선택)
@@ -579,13 +683,13 @@ python scripts/train_nnue_gpu.py --method iterative --iterations 3 --load models
 
 ```bash
 # 1. 기보로 기본 학습
-python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30 --output models/base_model.json
+uv run python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30 --output models/base_model.json
 
 # 2. 자기대전으로 보강
-python scripts/train_nnue_gpu.py --parallel --positions 50000 --load models/base_model.json --output models/hybrid_model.json
+uv run python scripts/train_nnue_gpu.py --parallel --positions 50000 --load models/base_model.json --output models/hybrid_model.json
 
 # 3. 반복 개선
-python scripts/train_nnue_gpu.py --method iterative --iterations 5 --load models/hybrid_model.json
+uv run python scripts/train_nnue_gpu.py --method iterative --iterations 5 --load models/hybrid_model.json
 ```
 
 ---
