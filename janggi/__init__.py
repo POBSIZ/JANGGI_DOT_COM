@@ -13,10 +13,6 @@ from .bitboard import (
     popcount, iter_bits, iter_squares,
     FILE_MASKS, RANK_MASKS, HAN_PALACE_MASK, CHO_PALACE_MASK,
 )
-from .multiplayer import (
-    ConnectionManager, RoomManager, GameRoom, Player,
-    RoomStatus, PlayerSide, get_connection_manager,
-)
 
 # Optional PyTorch support
 try:
@@ -42,9 +38,6 @@ __all__ = [
     'square_to_bit', 'bit_to_square', 'set_bit', 'clear_bit', 'is_bit_set',
     'popcount', 'iter_bits', 'iter_squares',
     'FILE_MASKS', 'RANK_MASKS', 'HAN_PALACE_MASK', 'CHO_PALACE_MASK',
-    # Multiplayer
-    'ConnectionManager', 'RoomManager', 'GameRoom', 'Player',
-    'RoomStatus', 'PlayerSide', 'get_connection_manager',
     # PyTorch (optional)
     'NNUETorch', 'GPUTrainer', 'get_device',
     'TORCH_AVAILABLE',

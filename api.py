@@ -2,19 +2,15 @@
 
 import os
 import asyncio
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from time import time
 
 from janggi.board import Board, Move, Side, Piece, PieceType
 from janggi.engine import Engine
-from janggi.multiplayer import get_connection_manager
 
 
 # Thread pool for CPU-intensive AI operations
@@ -265,9 +261,8 @@ def piece_to_korean_dict(piece: Optional[Piece]) -> Optional[Dict[str, str]]:
 
 @app.get("/")
 async def root():
-    """Serve the HTML frontend."""
-    static_path = os.path.join(os.path.dirname(__file__), "static", "index.html")
-    return FileResponse(static_path)
+    """Root endpoint."""
+    return {"message": "Janggi AI Engine API"}
 
 
 @app.post("/api/new-game")
@@ -338,114 +333,6 @@ async def get_board(game_id: str, req: Request):
     if not await check_rate_limit(req):
         raise HTTPException(
             status_code=429, detail="Too many requests. Please slow down."
-        )
-
-    # 멀티플레이어 게임 처리 (mp_ 접두사)
-    if game_id.startswith("mp_"):
-        room_id = game_id[3:]  # "mp_" 제거
-        manager = get_connection_manager()
-        room = manager.room_manager.get_room(room_id)
-        
-        if not room:
-            raise HTTPException(status_code=404, detail="Room not found")
-        
-        # 멀티플레이어 게임의 경우 Board 객체를 재구성
-        # move_history를 기반으로 현재 보드 상태를 만듭니다
-        board = Board(
-            han_formation=room.han_formation,
-            cho_formation=room.cho_formation,
-        )
-        
-        # move_history를 기반으로 수를 적용
-        for move_record in room.move_history:
-            from_square = move_record.get("from")
-            to_square = move_record.get("to")
-            if from_square and to_square:
-                try:
-                    from_file, from_rank = square_to_coords(from_square)
-                    to_file, to_rank = square_to_coords(to_square)
-                    move = Move(from_file, from_rank, to_file, to_rank)
-                    board.make_move(move)
-                except Exception:
-                    # 이동 실패 시 무시하고 계속 진행
-                    pass
-        
-        # 현재 턴 설정
-        board.side_to_move = Side.CHO if room.current_turn.value == "CHO" else Side.HAN
-        
-        # Convert board to 2D array
-        board_array = []
-        board_korean = []
-        for rank in range(board.RANKS - 1, -1, -1):  # Reverse for display
-            row = []
-            row_korean = []
-            for file in range(board.FILES):
-                piece = board.get_piece(file, rank)
-                row.append(piece_to_string(piece))
-                row_korean.append(piece_to_korean_dict(piece))
-            board_array.append(row)
-            board_korean.append(row_korean)
-        
-        # Get legal moves
-        try:
-            moves = board.generate_moves()
-            legal_moves = []
-            for move in moves:
-                legal_moves.append(
-                    {
-                        "from": coords_to_square(move.from_file, move.from_rank),
-                        "to": coords_to_square(move.to_file, move.to_rank),
-                    }
-                )
-        except Exception as e:
-            import traceback
-            print(f"Error generating moves: {e}")
-            traceback.print_exc()
-            legal_moves = []
-        
-        # Check game status
-        game_over = room.status.value in ["finished", "abandoned"]
-        winner = None
-        draw_reason = None
-        
-        if game_over:
-            # 게임 종료 사유 확인 (room 상태에서 추론)
-            if room.status.value == "finished":
-                # winner는 room 정보에서 가져와야 하는데, 현재 GameRoom에는 winner 필드가 없음
-                # move_history의 마지막 정보나 다른 방법으로 확인 필요
-                pass
-        
-        # Ensure move_history exists
-        if not hasattr(board, "move_history"):
-            board.move_history = []
-        
-        # Check if in check
-        try:
-            in_check = board.is_in_check(board.side_to_move)
-        except Exception as e:
-            import traceback
-            print(f"Error checking if in check: {e}")
-            traceback.print_exc()
-            in_check = False
-        
-        # 멀티플레이어 게임은 undo 불가
-        can_undo = False
-        
-        # 멀티플레이어 게임은 opening book 사용 안 함
-        in_opening_book = False
-        
-        return BoardResponse(
-            board=board_array,
-            board_korean=board_korean,
-            side_to_move=board.side_to_move.value,
-            game_over=game_over,
-            winner=winner,
-            draw_reason=draw_reason,
-            in_check=in_check,
-            legal_moves=legal_moves,
-            move_history=room.move_history,  # 멀티플레이어 게임의 move_history 사용
-            can_undo=can_undo,
-            in_opening_book=in_opening_book,
         )
 
     try:
@@ -779,55 +666,3 @@ async def get_opening_book_info(game_id: str, req: Request):
         "in_book": in_book,
         "enabled": game_state.engine.use_opening_book,
     }
-
-
-# ============================================
-# WebSocket Multiplayer Endpoints
-# ============================================
-
-@app.websocket("/ws/multiplayer/{player_id}")
-async def websocket_multiplayer(websocket: WebSocket, player_id: str):
-    """WebSocket endpoint for multiplayer games."""
-    manager = get_connection_manager()
-    await manager.connect(websocket, player_id)
-    
-    try:
-        while True:
-            data = await websocket.receive_json()
-            await manager.handle_message(player_id, data)
-    except WebSocketDisconnect:
-        await manager.disconnect(player_id)
-    except Exception as e:
-        print(f"WebSocket error for player {player_id}: {e}")
-        await manager.disconnect(player_id)
-
-
-@app.get("/api/multiplayer/rooms")
-async def get_available_rooms():
-    """Get list of available rooms to join."""
-    manager = get_connection_manager()
-    rooms = manager.room_manager.get_available_rooms()
-    return {"rooms": rooms}
-
-
-@app.get("/api/multiplayer/room/{room_id}")
-async def get_room_info(room_id: str):
-    """Get information about a specific room."""
-    manager = get_connection_manager()
-    room = manager.room_manager.get_room(room_id)
-    
-    if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
-    
-    return {"room": room.to_dict()}
-
-
-@app.post("/api/multiplayer/generate-player-id")
-async def generate_player_id():
-    """Generate a unique player ID for WebSocket connection."""
-    player_id = str(uuid.uuid4())
-    return {"player_id": player_id}
-
-
-# Mount static files
-app.mount("/static", StaticFiles(directory="static"), name="static")

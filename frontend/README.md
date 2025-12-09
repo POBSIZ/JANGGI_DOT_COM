@@ -25,9 +25,7 @@ frontend/
 ├── src/
 │   ├── pages/
 │   │   ├── GamePage.tsx          # AI 대전 페이지
-│   │   ├── GamePage.css
-│   │   ├── MultiplayerPage.tsx   # 멀티플레이어 페이지
-│   │   └── MultiplayerPage.css
+│   │   └── GamePage.css
 │   ├── App.tsx                   # 메인 앱 컴포넌트 (라우팅)
 │   ├── App.css
 │   ├── main.tsx                  # 진입점
@@ -41,7 +39,6 @@ frontend/
 ## 주요 기능
 
 - **AI 대전**: AI와 장기 대국
-- **멀티플레이어**: 실시간 온라인 대전
 - **Canvas 기반 보드 렌더링**: 부드러운 애니메이션과 인터랙션
 - **반응형 디자인**: 모바일 및 데스크톱 지원
 

@@ -23,12 +23,39 @@ import random
 import sys
 import os
 import time
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Callable
 import numpy as np
 
 from janggi.board import Board, Move, Side
 from janggi.nnue import NNUE, SimpleEvaluator
 from janggi.engine import Engine
+
+# ============================================================================
+# Training Configuration Constants
+# ============================================================================
+
+# Game Generation Settings
+DEFAULT_MAX_MOVES = 200
+DEFAULT_RANDOM_OPENING_MOVES = 4
+DEFAULT_TEMPERATURE = 0.3
+DEFAULT_RANDOM_OPENING_MIN = 4
+DEFAULT_RANDOM_OPENING_MAX = 20
+DEFAULT_RANDOM_MOVE_PROBABILITY = 0.3
+
+# Evaluation Settings
+EVAL_NORMALIZATION_FACTOR = 100.0
+FINAL_EVAL_SCALE = 10.0
+HUBER_LOSS_DELTA = 1.0
+
+# Training Settings
+DEFAULT_VALIDATION_SPLIT = 0.1
+DEFAULT_LR_DECAY = 0.95
+DEFAULT_EARLY_STOPPING_PATIENCE = 5
+DEFAULT_ITERATIVE_LR_DECAY = 0.8
+DEFAULT_ITERATIVE_BASE_LR = 0.001
+
+# Progress Reporting
+PROGRESS_UPDATE_FREQUENCY = 10
 
 
 class TrainingDataGenerator:
@@ -48,9 +75,9 @@ class TrainingDataGenerator:
 
     def generate_game(
         self,
-        max_moves: int = 200,
-        random_opening_moves: int = 4,
-        temperature: float = 0.3,
+        max_moves: int = DEFAULT_MAX_MOVES,
+        random_opening_moves: int = DEFAULT_RANDOM_OPENING_MOVES,
+        temperature: float = DEFAULT_TEMPERATURE,
     ) -> Tuple[List[Board], float, List[float]]:
         """Generate a single self-play game with position evaluations.
 
@@ -116,7 +143,7 @@ class TrainingDataGenerator:
 
         # Draw by move limit - evaluate final position
         final_eval = engine._evaluate(board)
-        result = np.tanh(final_eval / 10.0)  # Soft outcome based on evaluation
+        result = np.tanh(final_eval / FINAL_EVAL_SCALE)  # Soft outcome based on evaluation
         return positions, result, evaluations
 
     def generate_training_data(
@@ -138,7 +165,7 @@ class TrainingDataGenerator:
                     # Use search evaluation as target (more informative)
                     target = evaluations[i]
                     # Normalize large values
-                    target = np.clip(target / 100.0, -1.0, 1.0)
+                    target = np.clip(target / EVAL_NORMALIZATION_FACTOR, -1.0, 1.0)
                 else:
                     # Interpolate game result
                     progress = i / max(len(positions) - 1, 1)
@@ -172,7 +199,7 @@ class TrainingDataGenerator:
             board = Board()
 
             # Random opening
-            num_random = random.randint(4, 20)
+            num_random = random.randint(DEFAULT_RANDOM_OPENING_MIN, DEFAULT_RANDOM_OPENING_MAX)
             for _ in range(num_random):
                 moves = board.generate_moves()
                 if not moves:
@@ -191,7 +218,7 @@ class TrainingDataGenerator:
 
                 # Get deep search evaluation
                 target = engine._evaluate(board)
-                target = np.clip(target / 100.0, -1.0, 1.0)
+                target = np.clip(target / EVAL_NORMALIZATION_FACTOR, -1.0, 1.0)
 
                 boards.append(copy.deepcopy(board))
                 targets.append(target)
@@ -202,7 +229,7 @@ class TrainingDataGenerator:
                     break
 
                 # Mix of best and random moves
-                if random.random() < 0.3:
+                if random.random() < DEFAULT_RANDOM_MOVE_PROBABILITY:
                     move = random.choice(moves)
                 else:
                     move = engine.search(board)
@@ -211,7 +238,7 @@ class TrainingDataGenerator:
 
                 board.make_move(move)
 
-            if progress_callback and (game_idx + 1) % 10 == 0:
+            if progress_callback and (game_idx + 1) % PROGRESS_UPDATE_FREQUENCY == 0:
                 progress_callback(len(boards), num_positions)
 
         return boards, targets
@@ -230,12 +257,12 @@ class NNUETrainer:
         boards: List[Board],
         targets: List[float],
         epochs: int = 20,
-        learning_rate: float = 0.001,
+        learning_rate: float = DEFAULT_ITERATIVE_BASE_LR,
         batch_size: int = 64,
-        validation_split: float = 0.1,
-        lr_decay: float = 0.95,
-        early_stopping_patience: int = 5,
-        progress_callback=None,
+        validation_split: float = DEFAULT_VALIDATION_SPLIT,
+        lr_decay: float = DEFAULT_LR_DECAY,
+        early_stopping_patience: int = DEFAULT_EARLY_STOPPING_PATIENCE,
+        progress_callback: Optional[Callable] = None,
     ) -> dict:
         """Train the NNUE network with advanced features."""
         # Extract features once
@@ -298,16 +325,7 @@ class NNUETrainer:
             avg_train_loss = epoch_loss / len(train_features)
 
             # Validation
-            val_loss = 0.0
-            for i in range(len(val_features)):
-                pred = self.nnue._forward(val_features[i])
-                error = pred - val_targets[i]
-                # Huber loss
-                delta = 1.0
-                if abs(error) <= delta:
-                    val_loss += 0.5 * error**2
-                else:
-                    val_loss += delta * (abs(error) - 0.5 * delta)
+            val_loss = self._calculate_validation_loss(val_features, val_targets)
 
             avg_val_loss = (
                 val_loss / len(val_features) if len(val_features) > 0 else 0.0
@@ -346,6 +364,30 @@ class NNUETrainer:
             self.nnue.set_learning_rate(current_lr)
 
         return history
+    
+    def _calculate_validation_loss(
+        self, val_features: np.ndarray, val_targets: np.ndarray
+    ) -> float:
+        """Calculate validation loss using Huber loss.
+        
+        Args:
+            val_features: Validation feature vectors
+            val_targets: Validation target values
+            
+        Returns:
+            Average validation loss
+        """
+        val_loss = 0.0
+        for i in range(len(val_features)):
+            pred = self.nnue._forward(val_features[i])
+            error = pred - val_targets[i]
+            # Huber loss
+            if abs(error) <= HUBER_LOSS_DELTA:
+                val_loss += 0.5 * error**2
+            else:
+                val_loss += HUBER_LOSS_DELTA * (abs(error) - 0.5 * HUBER_LOSS_DELTA)
+        
+        return val_loss / len(val_features) if len(val_features) > 0 else 0.0
 
 
 class IterativeTrainer:
@@ -407,7 +449,7 @@ class IterativeTrainer:
             print(f"{'=' * 60}")
 
             # Decrease learning rate over iterations
-            lr = 0.001 * (0.8**iteration)
+            lr = DEFAULT_ITERATIVE_BASE_LR * (DEFAULT_ITERATIVE_LR_DECAY ** iteration)
 
             history = self.train_iteration(
                 games_per_iteration=games_per_iteration,

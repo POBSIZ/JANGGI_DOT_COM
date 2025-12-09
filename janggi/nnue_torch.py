@@ -5,7 +5,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import json
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import multiprocessing as mp
 from .board import Board, PieceType, Side
 
 
@@ -259,9 +262,34 @@ class FeatureExtractor:
         
         return han_adv / 5.0, cho_adv / 5.0
     
-    def extract_batch(self, boards: List[Board]) -> np.ndarray:
-        """Extract features for multiple boards."""
-        return np.array([self.extract(b) for b in boards], dtype=np.float32)
+    def extract_batch(self, boards: List[Board], num_workers: Optional[int] = None) -> np.ndarray:
+        """Extract features for multiple boards in parallel.
+        
+        Args:
+            boards: List of Board objects to extract features from
+            num_workers: Number of parallel workers (None = auto, uses CPU count)
+        
+        Returns:
+            Array of feature vectors (shape: [batch_size, feature_size])
+        """
+        if len(boards) == 0:
+            return np.array([], dtype=np.float32).reshape(0, self.feature_size)
+        
+        # For small batches, sequential processing is faster (no overhead)
+        if len(boards) < 10:
+            return np.array([self.extract(b) for b in boards], dtype=np.float32)
+        
+        # Use parallel processing for larger batches
+        if num_workers is None:
+            num_workers = min(mp.cpu_count(), len(boards))
+        
+        # Use ThreadPoolExecutor for I/O-bound or GIL-friendly operations
+        # Since feature extraction is mostly CPU-bound with NumPy, we use threads
+        # (NumPy releases GIL for many operations)
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            features = list(executor.map(self.extract, boards))
+        
+        return np.array(features, dtype=np.float32)
 
 
 class NNUETorch:
@@ -272,7 +300,8 @@ class NNUETorch:
         feature_size: int = 512, 
         hidden1_size: int = 256,
         hidden2_size: int = 64,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        eval_cache_size: int = 1000
     ):
         self.feature_size = feature_size
         self.hidden1_size = hidden1_size
@@ -283,22 +312,87 @@ class NNUETorch:
         
         self.model = NNUENet(feature_size, hidden1_size, hidden2_size).to(self.device)
         self.feature_extractor = FeatureExtractor(feature_size)
+        
+        # LRU cache for single position evaluations (using Zobrist hash as key)
+        # This helps when the same position is evaluated multiple times
+        self._eval_cache: OrderedDict[int, float] = OrderedDict()
+        self._eval_cache_size = eval_cache_size
     
-    def evaluate(self, board: Board) -> float:
-        """Evaluate board position."""
+    def evaluate(self, board: Board, use_cache: bool = True) -> float:
+        """Evaluate board position with optional caching.
+        
+        Args:
+            board: Board position to evaluate
+            use_cache: If True, use LRU cache for repeated positions (default: True)
+        
+        Returns:
+            Evaluation score
+        """
+        # Try cache first if enabled
+        if use_cache:
+            try:
+                position_hash = board.get_zobrist_hash()
+                if position_hash in self._eval_cache:
+                    # Move to end (most recently used)
+                    score = self._eval_cache.pop(position_hash)
+                    self._eval_cache[position_hash] = score
+                    return score
+            except (AttributeError, Exception):
+                # If board doesn't have get_zobrist_hash() or other error, skip cache
+                pass
+        
+        # Evaluate position
         self.model.eval()
         with torch.no_grad():
             features = self.feature_extractor.extract(board)
             x = torch.tensor(features, dtype=torch.float32, device=self.device).unsqueeze(0)
             output = self.model(x)
-            return output.item()
+            score = output.item()
+        
+        # Store in cache if enabled
+        if use_cache:
+            try:
+                position_hash = board.get_zobrist_hash()
+                # Add to cache (or update if already exists)
+                if position_hash in self._eval_cache:
+                    self._eval_cache.pop(position_hash)
+                self._eval_cache[position_hash] = score
+                
+                # Evict oldest entry if cache is full
+                if len(self._eval_cache) > self._eval_cache_size:
+                    self._eval_cache.popitem(last=False)  # Remove oldest (first) item
+            except (AttributeError, Exception):
+                # If board doesn't have get_zobrist_hash() or other error, skip cache
+                pass
+        
+        return score
     
-    def evaluate_batch(self, boards: List[Board]) -> np.ndarray:
-        """Evaluate multiple boards at once (efficient for GPU)."""
+    def clear_eval_cache(self):
+        """Clear the evaluation cache."""
+        self._eval_cache.clear()
+    
+    def evaluate_batch(self, boards: List[Board] = None, features: np.ndarray = None) -> np.ndarray:
+        """Evaluate multiple boards at once (efficient for GPU).
+        
+        Args:
+            boards: List of Board objects to evaluate (if features not provided)
+            features: Pre-extracted feature array (shape: [batch_size, feature_size])
+                     If provided, boards parameter is ignored.
+        
+        Returns:
+            Array of evaluation scores
+        """
         self.model.eval()
         with torch.no_grad():
-            features = self.feature_extractor.extract_batch(boards)
-            x = torch.tensor(features, dtype=torch.float32, device=self.device)
+            if features is not None:
+                # Use pre-extracted features (avoids duplicate extraction)
+                x = torch.tensor(features, dtype=torch.float32, device=self.device)
+            else:
+                # Extract features from boards
+                if boards is None:
+                    raise ValueError("Either boards or features must be provided")
+                features = self.feature_extractor.extract_batch(boards)
+                x = torch.tensor(features, dtype=torch.float32, device=self.device)
             outputs = self.model(x)
             return outputs.cpu().numpy().flatten()
     
@@ -423,17 +517,43 @@ class NNUETorch:
 
 
 class JanggiDataset(torch.utils.data.Dataset):
-    """PyTorch Dataset for Janggi positions."""
+    """PyTorch Dataset for Janggi positions with lazy loading support.
     
-    def __init__(self, features: np.ndarray, targets: np.ndarray):
-        self.features = torch.tensor(features, dtype=torch.float32)
-        self.targets = torch.tensor(targets, dtype=torch.float32).unsqueeze(1)
+    This dataset supports both eager loading (for small datasets) and lazy loading
+    (for large datasets to reduce memory usage). By default, uses lazy loading
+    to keep data as numpy arrays and convert to tensors on-demand.
+    """
+    
+    def __init__(self, features: np.ndarray, targets: np.ndarray, lazy_loading: bool = True):
+        """
+        Args:
+            features: Feature array (shape: [n_samples, feature_size])
+            targets: Target array (shape: [n_samples])
+            lazy_loading: If True, keep data as numpy arrays and convert on-demand.
+                         If False, convert to tensors immediately (for small datasets).
+        """
+        self.lazy_loading = lazy_loading
+        
+        if lazy_loading:
+            # Keep as numpy arrays to save memory
+            self.features = features  # Keep as numpy array
+            self.targets = targets    # Keep as numpy array
+        else:
+            # Eager loading for small datasets (faster access)
+            self.features = torch.tensor(features, dtype=torch.float32)
+            self.targets = torch.tensor(targets, dtype=torch.float32).unsqueeze(1)
     
     def __len__(self):
         return len(self.features)
     
     def __getitem__(self, idx):
-        return self.features[idx], self.targets[idx]
+        if self.lazy_loading:
+            # Convert to tensor on-demand
+            feature = torch.tensor(self.features[idx], dtype=torch.float32)
+            target = torch.tensor(self.targets[idx], dtype=torch.float32).unsqueeze(0)
+            return feature, target
+        else:
+            return self.features[idx], self.targets[idx]
 
 
 class GPUTrainer:
@@ -471,8 +591,11 @@ class GPUTrainer:
         train_indices = indices[n_val:]
         val_indices = indices[:n_val]
         
-        train_dataset = JanggiDataset(features[train_indices], targets[train_indices])
-        val_dataset = JanggiDataset(features[val_indices], targets[val_indices])
+        # Use lazy loading for large datasets (>100k samples) to save memory
+        # Small datasets benefit from eager loading (faster access)
+        use_lazy = n_samples > 100000
+        train_dataset = JanggiDataset(features[train_indices], targets[train_indices], lazy_loading=use_lazy)
+        val_dataset = JanggiDataset(features[val_indices], targets[val_indices], lazy_loading=use_lazy)
         
         train_loader = torch.utils.data.DataLoader(
             train_dataset, 

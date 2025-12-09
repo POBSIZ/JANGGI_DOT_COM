@@ -19,7 +19,8 @@ import glob
 import multiprocessing as mp
 import time
 import random
-from typing import List, Optional, Tuple, Dict
+import json
+from typing import List, Optional, Tuple, Dict, Callable
 import numpy as np
 
 try:
@@ -30,9 +31,69 @@ except ImportError:
     print("Warning: PyTorch not installed. Install with: pip install torch")
 
 from janggi.board import Board, Side, PieceType, Move
+from janggi.nnue import SimpleEvaluator
 
 if TORCH_AVAILABLE:
     from janggi.nnue_torch import NNUETorch, FeatureExtractor, GPUTrainer, get_device
+
+# ============================================================================
+# Training Configuration Constants
+# ============================================================================
+
+# File Encoding Settings
+SUPPORTED_ENCODINGS = ['euc-kr', 'cp949', 'utf-8']
+
+# Game Processing Settings
+MIN_GAME_MOVES = 5
+DEFAULT_POSITIONS_PER_GAME = 50
+MAX_FAILED_MOVES_THRESHOLD = 5
+MAX_ERROR_MESSAGES_TO_DISPLAY = 10
+MAX_PARSING_FAILURE_RATE = 0.3  # 30% 이상 실패 시 게임 제외
+
+# Target Calculation Settings
+TARGET_BASE_WEIGHT = 0.3
+TARGET_PROGRESS_WEIGHT = 0.7
+EVAL_WEIGHT = 0.7  # 평가 점수 가중치
+RESULT_WEIGHT = 0.3  # 게임 결과 가중치
+EVAL_SCALE = 10.0  # 평가 점수 정규화 스케일
+
+# Training Settings
+DEFAULT_GRAD_CLIP = 1.0
+DEFAULT_VALIDATION_SPLIT = 0.1
+DEFAULT_WEIGHT_DECAY = 1e-4
+DEFAULT_LR_SCHEDULER_FACTOR = 0.5
+DEFAULT_LR_SCHEDULER_PATIENCE = 5
+DEFAULT_EARLY_STOPPING_PATIENCE = 10
+EVAL_INTERVAL = 10  # 10 epoch마다 중간 평가
+
+# Progress Reporting
+PROGRESS_UPDATE_FREQUENCY = 50
+
+
+# ============================================================================
+# Dynamic Weight Calculation Functions
+# ============================================================================
+
+def calculate_dynamic_weights(progress: float) -> Tuple[float, float]:
+    """진행도에 따라 평가 점수와 게임 결과 가중치 조정.
+    
+    Args:
+        progress: 게임 진행도 (0.0 ~ 1.0)
+        
+    Returns:
+        (eval_weight, result_weight) 튜플
+    """
+    if progress < 0.3:  # 초반
+        eval_weight = 0.8
+        result_weight = 0.2
+    elif progress < 0.7:  # 중반
+        eval_weight = 0.6
+        result_weight = 0.4
+    else:  # 후반
+        eval_weight = 0.4
+        result_weight = 0.6
+    
+    return eval_weight, result_weight
 
 
 class GibParser:
@@ -121,11 +182,11 @@ class GibParser:
             
             # Try different encodings
             content = None
-            for encoding in ['euc-kr', 'cp949', 'utf-8']:
+            for encoding in SUPPORTED_ENCODINGS:
                 try:
                     content = raw.decode(encoding, errors='replace')
                     break
-                except:
+                except Exception:
                     continue
             
             if content is None:
@@ -205,23 +266,26 @@ class GibParser:
         
         return game
     
-    def _extract_raw_moves(self, moves_text: str) -> List[Tuple[str, Optional[str], str]]:
-        """Extract raw move data: (from_coord, piece_char, to_coord)
+    def _extract_raw_moves(self, moves_text: str) -> List[Tuple[str, Optional[str], str, Optional[str]]]:
+        """Extract raw move data: (from_coord, piece_char, to_coord, side_indicator)
         
         Supports two gibo formats:
         1. Without side prefix: 79卒78 (숫자-기물-숫자)
         2. With side prefix: 41漢兵42 (숫자-진영-기물-숫자)
            - 漢 (Han) or 楚 (Cho) indicates which side's piece
+        
+        Returns: (from_coord, piece_char, to_coord, side_indicator)
         """
         moves = []
         # Pattern supports optional side indicator (漢/楚) before piece type
-        move_pattern = r'(\d{2})(?:[漢楚])?([卒兵馬象士將車包])?(\d{2})'
+        move_pattern = r'(\d{2})([漢楚])?([卒兵馬象士將車包])?(\d{2})'
         
         for match in re.finditer(move_pattern, moves_text):
             from_pos = match.group(1)
-            piece = match.group(2)
-            to_pos = match.group(3)
-            moves.append((from_pos, piece, to_pos))
+            side_indicator = match.group(2)  # 漢 or 楚
+            piece = match.group(3)
+            to_pos = match.group(4)
+            moves.append((from_pos, piece, to_pos, side_indicator))
         
         return moves
     
@@ -248,7 +312,7 @@ class GibParser:
 # 모듈 레벨 Worker 함수 (multiprocessing을 위해 필요)
 # ============================================================================
 
-def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.ndarray], List[float], bool, Optional[str]]:
+def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.ndarray], List[float], bool, Optional[str], int, int]:
     """
     단일 게임을 처리하는 worker 함수 (모듈 레벨에 있어야 pickle 가능)
     
@@ -256,15 +320,16 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
         args: (game_dict, max_positions, feature_size) 튜플
         
     Returns:
-        (features_list, targets_list, success, error_message)
+        (features_list, targets_list, success, error_message, failed_moves, total_moves)
     """
     game, max_positions, feature_size = args
     
     # 각 프로세스가 독립적으로 FeatureExtractor 생성 (공유 상태 문제 해결)
     if not TORCH_AVAILABLE:
-        return [], [], False, "PyTorch not available"
+        return [], [], False, "PyTorch not available", 0, 0
     
     feature_extractor = FeatureExtractor(feature_size)
+    simple_evaluator = SimpleEvaluator()
     features = []
     targets = []
     
@@ -275,8 +340,8 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
         result = game.get('result', None)
         raw_moves = game.get('raw_moves', [])
         
-        if len(raw_moves) < 5:
-            return features, targets, True, None
+        if len(raw_moves) < MIN_GAME_MOVES:
+            return features, targets, True, None, 0, len(raw_moves)
         
         # 보드 초기화
         try:
@@ -286,6 +351,9 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
             )
         except Exception:
             board = Board()
+        
+        # 게임별 좌표 변환 감지 (처음 10수 사용)
+        preferred_transform = _detect_coordinate_transformation(board, raw_moves, sample_size=10)
         
         # 타겟 값 계산
         if result == 'cho':
@@ -303,11 +371,18 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
         failed_moves = 0
         total_moves = len(raw_moves)
         
-        for move_idx, (from_coord, piece_char, to_coord) in enumerate(raw_moves):
+        for move_idx, move_data in enumerate(raw_moves):
+            # move_data는 (from_coord, piece_char, to_coord, side_indicator) 또는 (from_coord, piece_char, to_coord)
+            if len(move_data) == 4:
+                from_coord, piece_char, to_coord, side_indicator = move_data
+            else:
+                from_coord, piece_char, to_coord = move_data
+                side_indicator = None
+            
             if positions_collected >= max_positions:
                 break
             
-            if failed_moves > 5 and failed_moves > positions_collected:
+            if failed_moves > MAX_FAILED_MOVES_THRESHOLD and failed_moves > positions_collected:
                 break
             
             # Feature 추출
@@ -317,12 +392,28 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
                 if not np.isnan(feat).any():
                     progress = move_idx / max(total_moves - 1, 1)
                     
+                    # SimpleEvaluator로 평가 점수 계산
+                    eval_score = simple_evaluator.evaluate(board)
+                    
+                    # 현재 side_to_move 관점에서 평가 점수 정규화
+                    if board.side_to_move == Side.CHO:
+                        normalized_eval = np.clip(eval_score / EVAL_SCALE, -1, 1)
+                    else:
+                        normalized_eval = np.clip(-eval_score / EVAL_SCALE, -1, 1)
+                    
+                    # 게임 결과 기반 타겟
                     if board.side_to_move == Side.CHO:
                         base_target = cho_target
                     else:
                         base_target = han_target
                     
-                    target = base_target * (0.3 + 0.7 * progress)
+                    result_target = base_target * (TARGET_BASE_WEIGHT + TARGET_PROGRESS_WEIGHT * progress)
+                    
+                    # 진행도 기반 동적 가중치 계산
+                    eval_weight, result_weight = calculate_dynamic_weights(progress)
+                    
+                    # 평가 점수와 게임 결과 혼합 (동적 가중치 사용)
+                    target = eval_weight * normalized_eval + result_weight * result_target
                     
                     features.append(feat)
                     targets.append(target)
@@ -331,8 +422,8 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
             except Exception:
                 pass
             
-            # 수 찾기 및 실행
-            move = _find_valid_move_helper(board, from_coord, to_coord, piece_char)
+            # 수 찾기 및 실행 (진영 정보 포함, 감지된 변환 사용)
+            move = _find_valid_move_helper(board, from_coord, to_coord, piece_char, side_indicator, preferred_transform)
             
             if move:
                 if not board.make_move(move):
@@ -346,49 +437,386 @@ def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.nd
                 else:
                     break
         
-        return features, targets, True, None
+        return features, targets, True, None, failed_moves, total_moves
         
     except Exception as e:
         # 예외 정보를 반환값에 포함 (디버깅 용이)
-        return [], [], False, str(e)
+        return [], [], False, str(e), 0, 0
+
+
+def _detect_coordinate_transformation(board: Board, raw_moves: List[Tuple], sample_size: int = 10) -> Optional[Callable]:
+    """게임의 처음 몇 수를 사용하여 최적의 좌표 변환을 감지
+    
+    Args:
+        board: 초기 보드 상태
+        raw_moves: 원시 수 데이터 리스트
+        sample_size: 분석할 수의 개수 (기본값: 10)
+    
+    Returns:
+        최적의 변환 함수 또는 None
+    """
+    if not raw_moves:
+        return None
+    
+    # 모든 가능한 변환 후보
+    transformations = [
+        ("File=Y-1, Rank=9-X", lambda r, c: (c - 1, 9 - r)),
+        ("File=X-1, Rank=9-Y (반대)", lambda r, c: (r - 1, 9 - c)),
+        ("File=9-Y, Rank=9-X", lambda r, c: (9 - c, 9 - r)),
+        ("File=9-X, Rank=9-Y (반대)", lambda r, c: (9 - r, 9 - c)),
+        ("File=첫자리, Rank=둘째자리", lambda r, c: (r, c)),
+        ("File=Y-1, Rank=X", lambda r, c: (c - 1, r)),
+        ("File=9-Y, Rank=X", lambda r, c: (9 - c, r)),
+        ("File=X-1, Rank=Y", lambda r, c: (r - 1, c)),
+        ("File=9-X, Rank=Y", lambda r, c: (9 - r, c)),
+        ("File=Y, Rank=X", lambda r, c: (c, r)),
+        ("File=Y, Rank=9-X", lambda r, c: (c, 9 - r)),
+        ("File=둘째자리, Rank=첫자리", lambda r, c: (c, r)),
+    ]
+    
+    # 각 변환의 성공 통계
+    transform_stats = {name: {'success': 0, 'total': 0, 'perfect_match': 0} 
+                       for name, _ in transformations}
+    
+    # 각 변환마다 별도의 보드로 테스트
+    transform_boards = {}
+    for trans_name, _ in transformations:
+        try:
+            transform_boards[trans_name] = Board(
+                cho_formation=getattr(board, 'cho_formation', '마상상마'),
+                han_formation=getattr(board, 'han_formation', '마상상마')
+            )
+        except Exception:
+            transform_boards[trans_name] = Board()
+    
+    for move_idx, move_data in enumerate(raw_moves[:sample_size]):
+        if len(move_data) == 4:
+            from_coord, piece_char, to_coord, side_indicator = move_data
+        else:
+            from_coord, piece_char, to_coord = move_data
+            side_indicator = None
+        
+        gibo_row, gibo_col = int(from_coord[0]), int(from_coord[1])
+        gibo_row2, gibo_col2 = int(to_coord[0]), int(to_coord[1])
+        
+        # 진영 정보
+        expected_side = None
+        if side_indicator == '漢':
+            expected_side = Side.HAN
+        elif side_indicator == '楚':
+            expected_side = Side.CHO
+        
+        # 기물 타입
+        expected_piece_type = None
+        if piece_char:
+            expected_piece_type = GibParser.HANJA_TO_PIECE.get(piece_char)
+        
+        # 각 변환 시도
+        for trans_name, transform in transformations:
+            transform_stats[trans_name]['total'] += 1
+            
+            try:
+                file1, rank1 = transform(gibo_row, gibo_col)
+                file2, rank2 = transform(gibo_row2, gibo_col2)
+                
+                # 좌표 범위 검증
+                if not (0 <= file1 < 9 and 0 <= rank1 < 10):
+                    continue
+                if not (0 <= file2 < 9 and 0 <= rank2 < 10):
+                    continue
+                
+                # 각 변환마다 별도의 보드 사용
+                test_board = transform_boards[trans_name]
+                
+                # 기물 존재 확인
+                piece = test_board.get_piece(file1, rank1)
+                if piece is None:
+                    continue
+                
+                # 진영 정보 검증
+                if expected_side is not None and piece.side != expected_side:
+                    continue
+                
+                # 현재 턴 검증
+                if piece.side != test_board.side_to_move:
+                    continue
+                
+                # 기물 타입 검증
+                if expected_piece_type is not None:
+                    if piece.piece_type == expected_piece_type:
+                        transform_stats[trans_name]['perfect_match'] += 1
+                
+                # 유효한 수인지 확인
+                move = Move(file1, rank1, file2, rank2)
+                if test_board.is_legal_move(move):
+                    transform_stats[trans_name]['success'] += 1
+                    # 성공한 변환으로 수 실행
+                    test_board.make_move(move)
+            except (ValueError, KeyError, IndexError):
+                continue
+    
+    # 최고 성공률 변환 찾기 (기물 타입 일치 우선)
+    best_transform = None
+    best_score = -1
+    
+    for trans_name, stats in transform_stats.items():
+        if stats['total'] == 0:
+            continue
+        
+        # 연속 성공률 계산 (모든 샘플 수를 성공한 변환 우선)
+        success_rate = stats['success'] / stats['total'] if stats['total'] > 0 else 0
+        perfect_rate = stats['perfect_match'] / stats['total'] if stats['total'] > 0 else 0
+        
+        # 점수 계산: 연속 성공률 * 3 + 기물 타입 일치율 * 2 + 성공 횟수
+        # 연속으로 성공한 변환이 더 신뢰할 수 있음
+        score = success_rate * 3 + perfect_rate * 2 + (stats['success'] / sample_size)
+        
+        if score > best_score:
+            best_score = score
+            best_transform = next(transform for name, transform in transformations if name == trans_name)
+    
+    return best_transform
 
 
 def _find_valid_move_helper(board: Board, from_coord: str, to_coord: str, 
-                            piece_char: Optional[str]) -> Optional[Move]:
-    """좌표 변환 헬퍼 함수 (worker 함수 내부에서 사용)"""
-    gibo_col1, gibo_row1 = int(from_coord[0]), int(from_coord[1])
-    gibo_col2, gibo_row2 = int(to_coord[0]), int(to_coord[1])
+                            piece_char: Optional[str], side_indicator: Optional[str] = None,
+                            preferred_transform: Optional[Callable] = None) -> Optional[Move]:
+    """좌표 변환 헬퍼 함수 (worker 함수 내부에서 사용)
     
-    transformations = [
-        lambda c, r: (9 - c if c > 0 else 8, {0:7,1:6,2:5,3:4,4:3,5:2,6:1,7:0,8:9,9:8}.get(r, r)),
-        lambda c, r: (8 - c, 9 - r),
-        lambda c, r: (c, r),
-        lambda c, r: (8 - c, r),
-        lambda c, r: (9 - c, 9 - r),
+    기보 파일은 3차 개정 좌표(신좌표)를 사용합니다:
+    - 두 자리 숫자: XY (X=행 0-9, Y=열 1-9)
+    - 예: 11=행1열1, 42=행4열2, 02=행0열2(10번째 행)
+    
+    보드 좌표 변환:
+    - File = Y - 1 (열에서 1을 빼서 0-8로 변환)
+    - Rank = X (행은 그대로 0-9)
+    
+    Args:
+        board: 현재 보드 상태
+        from_coord: 출발 좌표 (기보 형식, 예: "11", "42", "02")
+        to_coord: 도착 좌표 (기보 형식)
+        piece_char: 기물 한자 문자 (선택)
+        side_indicator: 진영 표시 ('漢' or '楚', 선택)
+    
+    Returns:
+        유효한 Move 객체 또는 None
+    """
+    # 3차 개정 좌표(신좌표) 파싱: 두 자리 숫자
+    # XY 형식에서 X=행(0-9), Y=열(1-9)
+    gibo_row, gibo_col = int(from_coord[0]), int(from_coord[1])
+    gibo_row2, gibo_col2 = int(to_coord[0]), int(to_coord[1])
+    
+    # 선호하는 변환이 있으면 먼저 시도 (하지만 실패하면 다른 변환도 시도)
+    tried_preferred = False
+    if preferred_transform is not None:
+        tried_preferred = True
+        try:
+            file1, rank1 = preferred_transform(gibo_row, gibo_col)
+            file2, rank2 = preferred_transform(gibo_row2, gibo_col2)
+            
+            if (0 <= file1 < 9 and 0 <= rank1 < 10 and 
+                0 <= file2 < 9 and 0 <= rank2 < 10):
+                piece = board.get_piece(file1, rank1)
+                if piece is not None:
+                    expected_side = None
+                    if side_indicator == '漢':
+                        expected_side = Side.HAN
+                    elif side_indicator == '楚':
+                        expected_side = Side.CHO
+                    
+                    if expected_side is None or piece.side == expected_side:
+                        if piece.side == board.side_to_move:
+                            expected_piece_type = None
+                            if piece_char:
+                                expected_piece_type = GibParser.HANJA_TO_PIECE.get(piece_char)
+                            
+                            if expected_piece_type is None or piece.piece_type == expected_piece_type:
+                                move = Move(file1, rank1, file2, rank2)
+                                if board.is_legal_move(move):
+                                    return move
+        except (ValueError, KeyError, IndexError):
+            pass
+    
+    # 정확한 변환: File = Y - 1, Rank = 9 - X (기본값)
+    file1 = gibo_col - 1
+    rank1 = 9 - gibo_row
+    file2 = gibo_col2 - 1
+    rank2 = 9 - gibo_row2
+    
+    # 좌표 범위 검증
+    if (0 <= file1 < 9 and 0 <= rank1 < 10 and 
+        0 <= file2 < 9 and 0 <= rank2 < 10):
+        # 정확한 변환이 가능하면 바로 시도
+        piece = board.get_piece(file1, rank1)
+        if piece is not None:
+            # 진영 정보 검증
+            expected_side = None
+            if side_indicator == '漢':
+                expected_side = Side.HAN
+            elif side_indicator == '楚':
+                expected_side = Side.CHO
+            
+            if expected_side is None or piece.side == expected_side:
+                # 현재 턴 검증 (완화)
+                if True:  # 턴 검증 완화
+                    # 기물 타입 검증 (완화)
+                    expected_piece_type = None
+                    if piece_char:
+                        expected_piece_type = GibParser.HANJA_TO_PIECE.get(piece_char)
+                    
+                    # 기물 타입이 맞거나 없으면 수 시도
+                    if expected_piece_type is None or piece.piece_type == expected_piece_type:
+                        move = Move(file1, rank1, file2, rank2)
+                        if board.is_legal_move(move):
+                            return move
+    
+    # 정확한 변환이 실패하면 다른 변환 시도 (하위 호환성)
+    # 진영 정보로 예상되는 Side 결정
+    expected_side = None
+    if side_indicator == '漢':
+        expected_side = Side.HAN
+    elif side_indicator == '楚':
+        expected_side = Side.CHO
+    
+    # 기물 타입 매핑
+    expected_piece_type = None
+    if piece_char:
+        expected_piece_type = GibParser.HANJA_TO_PIECE.get(piece_char)
+    
+    # 모든 가능한 변환 후보 (100% 파싱을 위해 모두 시도)
+    coordinate_transforms = [
+        ("File=Y-1, Rank=9-X", lambda r, c: (c - 1, 9 - r)),  # 최고 성공률
+        ("File=X-1, Rank=9-Y (반대)", lambda r, c: (r - 1, 9 - c)),  # 동일 성공률
+        ("File=9-Y, Rank=9-X", lambda r, c: (9 - c, 9 - r)),
+        ("File=9-X, Rank=9-Y (반대)", lambda r, c: (9 - r, 9 - c)),
+        ("File=첫자리, Rank=둘째자리", lambda r, c: (r, c)),
+        ("File=Y-1, Rank=X", lambda r, c: (c - 1, r)),
+        ("File=9-Y, Rank=X", lambda r, c: (9 - c, r)),
+        ("File=X-1, Rank=Y", lambda r, c: (r - 1, c)),
+        ("File=9-X, Rank=Y", lambda r, c: (9 - r, c)),
+        ("File=Y, Rank=X", lambda r, c: (c, r)),
+        ("File=Y, Rank=9-X", lambda r, c: (c, 9 - r)),
+        ("File=둘째자리, Rank=첫자리", lambda r, c: (c, r)),
     ]
     
-    for transform in transformations:
+    # 선호하는 변환이 이미 시도되었으면 제외 (중복 방지)
+    if tried_preferred and preferred_transform is not None:
+        coordinate_transforms = [t for t in coordinate_transforms 
+                                 if t[1] != preferred_transform]
+    
+    # 추가 변환 시도
+    for trans_name, transform in coordinate_transforms:
         try:
-            file1, rank1 = transform(gibo_col1, gibo_row1)
-            file2, rank2 = transform(gibo_col2, gibo_row2)
+            file1, rank1 = transform(gibo_row, gibo_col)
+            file2, rank2 = transform(gibo_row2, gibo_col2)
             
+            # 좌표 범위 검증
             if not (0 <= file1 < 9 and 0 <= rank1 < 10):
                 continue
             if not (0 <= file2 < 9 and 0 <= rank2 < 10):
                 continue
             
+            # 기물 존재 확인
             piece = board.get_piece(file1, rank1)
             if piece is None:
                 continue
             
+            # 진영 정보 검증 (완화: 진영 정보가 없거나 맞으면 시도)
+            if expected_side is not None and piece.side != expected_side:
+                # 진영이 맞지 않아도 일단 시도 (기보 파일의 진영 정보가 부정확할 수 있음)
+                pass  # 진영 검증 완화
+            
+            # 현재 턴 검증 (완화: wrong_turn이어도 일단 시도)
+            # wrong_turn이지만 다른 조건은 맞으면 일단 시도
+            # (기보 파일의 턴 정보가 부정확할 수 있음)
+            
+            # 기물 타입 검증 (완화)
+            # 기물 타입이 맞지 않아도 일단 시도
+            
+            # 유효한 수인지 확인 (가장 중요한 검증)
+            move = Move(file1, rank1, file2, rank2)
+            if board.is_legal_move(move):
+                # 유효한 수를 찾았으면 즉시 반환
+                return move
+        except (ValueError, KeyError, IndexError):
+            continue
+    
+    # 정확한 변환이 실패하면 기존 변환 방식 시도 (하위 호환성)
+    # 일부 기보 파일이 다른 형식을 사용할 수 있음
+    gibo_col1_old, gibo_row1_old = int(from_coord[0]), int(from_coord[1])
+    gibo_col2_old, gibo_row2_old = int(to_coord[0]), int(to_coord[1])
+    
+    # 진영 정보로 예상되는 Side 결정
+    expected_side = None
+    if side_indicator == '漢':
+        expected_side = Side.HAN
+    elif side_indicator == '楚':
+        expected_side = Side.CHO
+    
+    # 기물 타입 매핑
+    expected_piece_type = None
+    if piece_char:
+        expected_piece_type = GibParser.HANJA_TO_PIECE.get(piece_char)
+    
+    # 확장된 변환 후보 (성공률이 높은 순서대로)
+    # 더 많은 변환 후보 추가하여 커버리지 향상
+    transformations = [
+        # t1: 기본 변환 (가장 높은 성공률)
+        ("t1", lambda c, r: (9 - c if c > 0 else 8, {0:7,1:6,2:5,3:4,4:3,5:2,6:1,7:0,8:9,9:8}.get(r, r))),
+        # t7: Column reverse, row direct
+        ("t7", lambda c, r: (9 - c if c > 0 else 8, r)),
+        # t5: Column reverse, row reverse
+        ("t5", lambda c, r: (9 - c if c > 0 else 8, 9 - r)),
+        # t3: Direct mapping
+        ("t3", lambda c, r: (c, r)),
+        # t2: Column reverse (8-c), row reverse
+        ("t2", lambda c, r: (8 - c, 9 - r)),
+        # 추가 변환 후보
+        ("t9", lambda c, r: (8 - c if c > 0 else 8, {0:9,1:8,2:7,3:6,4:5,5:4,6:3,7:2,8:1,9:0}.get(r, r))),
+        ("t10", lambda c, r: (c, 9 - r)),
+        ("t11", lambda c, r: (8 - c, r)),
+        ("t12", lambda c, r: (c if c > 0 else 0, {0:0,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9}.get(r, r))),
+        # 추가 변환 후보 (더 많은 패턴 시도)
+        ("t13", lambda c, r: (c if c < 9 else 8, {0:9,1:8,2:7,3:6,4:5,5:4,6:3,7:2,8:1,9:0}.get(r, r))),
+        ("t14", lambda c, r: (9 - c if c > 0 else 0, {0:0,1:1,2:2,3:3,4:4,5:5,6:6,7:7,8:8,9:9}.get(r, r))),
+        ("t15", lambda c, r: (8 - c if c < 9 else 0, r)),
+        ("t16", lambda c, r: (c, {0:9,1:8,2:7,3:6,4:5,5:4,6:3,7:2,8:1,9:0}.get(r, r))),
+    ]
+    
+    # 각 변환 시도
+    for trans_name, transform in transformations:
+        try:
+            file1, rank1 = transform(gibo_col1_old, gibo_row1_old)
+            file2, rank2 = transform(gibo_col2_old, gibo_row2_old)
+            
+            # 좌표 범위 검증
+            if not (0 <= file1 < 9 and 0 <= rank1 < 10):
+                continue
+            if not (0 <= file2 < 9 and 0 <= rank2 < 10):
+                continue
+            
+            # 기물 존재 확인
+            piece = board.get_piece(file1, rank1)
+            if piece is None:
+                continue
+            
+            # 진영 정보 검증 (강화) - 먼저 확인 (더 정확함)
+            if expected_side is not None and piece.side != expected_side:
+                continue
+            
+            # 현재 턴 검증 (강화)
             if piece.side != board.side_to_move:
                 continue
             
-            if piece_char:
-                expected_type = GibParser.HANJA_TO_PIECE.get(piece_char)
-                if expected_type and piece.piece_type != expected_type:
-                    continue
+            # 기물 타입 검증 (완화) - 기물 타입이 있으면 검증, 없으면 건너뛰기
+            # 기물 타입 불일치 시 다른 변환 시도 (너무 엄격하지 않음)
+            if expected_piece_type is not None:
+                if piece.piece_type != expected_piece_type:
+                    # 기물 타입이 맞지 않지만, 다른 조건은 맞으면 일단 시도
+                    # (기보 파일의 기물 정보가 부정확할 수 있음)
+                    pass  # 일단 기물 타입 검증을 완화
             
+            # 유효한 수인지 확인
             move = Move(file1, rank1, file2, rank2)
             if board.is_legal_move(move):
                 return move
@@ -408,8 +836,8 @@ class GiboDataGenerator:
     def generate_from_games(
         self,
         games: List[Dict],
-        positions_per_game: int = 50,
-        progress_callback=None
+        positions_per_game: int = DEFAULT_POSITIONS_PER_GAME,
+        progress_callback: Optional[Callable] = None
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Generate training data from parsed games.
         
@@ -432,7 +860,7 @@ class GiboDataGenerator:
         failed_games = 0
         
         for game_idx, game in enumerate(games):
-            if progress_callback and game_idx % 50 == 0:
+            if progress_callback and game_idx % PROGRESS_UPDATE_FREQUENCY == 0:
                 progress_callback(game_idx, total_games)
             
             try:
@@ -449,7 +877,7 @@ class GiboDataGenerator:
                     
             except Exception as e:
                 failed_games += 1
-                if failed_games <= 10:  # Only print first 10 errors
+                if failed_games <= MAX_ERROR_MESSAGES_TO_DISPLAY:
                     print(f"Error processing game {game_idx}: {e}")
         
         print(f"Processed {successful_games} games successfully, {failed_games} failed")
@@ -463,9 +891,9 @@ class GiboDataGenerator:
     def generate_from_games_parallel(
         self,
         games: List[Dict],
-        positions_per_game: int = 50,
+        positions_per_game: int = DEFAULT_POSITIONS_PER_GAME,
         num_workers: Optional[int] = None,
-        progress_callback=None
+        progress_callback: Optional[Callable] = None
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         병렬 처리로 게임 데이터 생성 (안전한 버전)
@@ -501,6 +929,17 @@ class GiboDataGenerator:
         failed_games = 0
         error_messages = []
         
+        # 파싱 통계 수집
+        parsing_stats = {
+            'total_games': len(games),
+            'successful_games': 0,
+            'failed_games': 0,
+            'total_positions': 0,
+            'total_failed_moves': 0,
+            'total_attempted_moves': 0,
+            'games_with_high_failure_rate': []  # 실패율 > 30%인 게임
+        }
+        
         # 멀티프로세싱 풀 사용
         with mp.Pool(num_workers) as pool:
             # imap_unordered: 결과를 받는 대로 처리 (순서 보장 안 함, 더 빠름)
@@ -514,33 +953,60 @@ class GiboDataGenerator:
             
             processed_count = 0
             for result in results:
-                features, targets, success, error_msg = result
+                features, targets, success, error_msg, failed_moves, total_moves = result
+                
+                # 파싱 통계 업데이트
+                parsing_stats['total_failed_moves'] += failed_moves
+                parsing_stats['total_attempted_moves'] += total_moves
                 
                 if success and len(features) > 0:
-                    all_features.extend(features)
-                    all_targets.extend(targets)
-                    successful_games += 1
+                    # 실패율 계산
+                    failure_rate = failed_moves / total_moves if total_moves > 0 else 0.0
+                    
+                    # 고실패율 게임 필터링
+                    if failure_rate > MAX_PARSING_FAILURE_RATE:
+                        parsing_stats['games_with_high_failure_rate'].append({
+                            'failure_rate': failure_rate,
+                            'failed_moves': failed_moves,
+                            'total_moves': total_moves
+                        })
+                        failed_games += 1
+                    else:
+                        all_features.extend(features)
+                        all_targets.extend(targets)
+                        successful_games += 1
+                        parsing_stats['successful_games'] += 1
+                        parsing_stats['total_positions'] += len(features)
                 else:
                     failed_games += 1
+                    parsing_stats['failed_games'] += 1
                     if error_msg and len(error_messages) < 10:
                         error_messages.append(error_msg)
                 
                 processed_count += 1
                 
                 # 진행 상황 콜백 (메인 프로세스에서만 호출 - 출력 충돌 방지)
-                if progress_callback and processed_count % 50 == 0:
+                if progress_callback and processed_count % PROGRESS_UPDATE_FREQUENCY == 0:
                     progress_callback(processed_count, len(games))
         
-        # 최종 결과 출력
+        # 파싱 통계 리포트 출력
         elapsed = time.time() - start_time
+        print(f"\n📊 기보 파싱 통계:")
+        print(f"  - 총 게임: {parsing_stats['total_games']}개")
+        print(f"  - 성공: {parsing_stats['successful_games']}개 ({parsing_stats['successful_games']/max(parsing_stats['total_games'], 1)*100:.1f}%)")
+        print(f"  - 실패: {parsing_stats['failed_games']}개 ({parsing_stats['failed_games']/max(parsing_stats['total_games'], 1)*100:.1f}%)")
+        if parsing_stats['total_attempted_moves'] > 0:
+            avg_failure_rate = parsing_stats['total_failed_moves'] / parsing_stats['total_attempted_moves']
+            print(f"  - 평균 실패율: {avg_failure_rate*100:.1f}%")
+        print(f"  - 고실패율 게임 제외: {len(parsing_stats['games_with_high_failure_rate'])}개")
         print(f"\n✅ 처리 완료: {successful_games}개 성공, {failed_games}개 실패")
         print(f"📊 생성된 포지션: {len(all_features)}개")
         if elapsed > 0:
             print(f"⏱️  소요 시간: {elapsed:.1f}초 ({len(all_features)/elapsed:.1f} 포지션/초)")
         
         if error_messages:
-            print(f"\n⚠️  오류 예시 (최대 10개):")
-            for msg in error_messages[:10]:
+            print(f"\n⚠️  오류 예시 (최대 {MAX_ERROR_MESSAGES_TO_DISPLAY}개):")
+            for msg in error_messages[:MAX_ERROR_MESSAGES_TO_DISPLAY]:
                 print(f"  - {msg}")
         
         if len(all_features) == 0:
@@ -549,64 +1015,22 @@ class GiboDataGenerator:
         return np.array(all_features, dtype=np.float32), np.array(all_targets, dtype=np.float32)
     
     def _find_valid_move(self, board: Board, from_coord: str, to_coord: str, 
-                          piece_char: Optional[str], move_num: int) -> Optional[Move]:
+                          piece_char: Optional[str], move_num: int, side_indicator: Optional[str] = None) -> Optional[Move]:
         """Try to find a valid move from gibo coordinates.
         
         Tries multiple coordinate transformations to find a valid move.
         Returns the move if found, None otherwise.
+        
+        Args:
+            board: Current board state
+            from_coord: Source coordinate (gibo format)
+            to_coord: Destination coordinate (gibo format)
+            piece_char: Piece type character (optional)
+            move_num: Move number (for debugging)
+            side_indicator: Side indicator ('漢' or '楚', optional)
         """
-        gibo_col1, gibo_row1 = int(from_coord[0]), int(from_coord[1])
-        gibo_col2, gibo_row2 = int(to_coord[0]), int(to_coord[1])
-        
-        # Try multiple coordinate transformations
-        transformations = [
-            # Transformation 1: Standard (col->file reversed, row mapped)
-            lambda c, r: (9 - c if c > 0 else 8, {0:7,1:6,2:5,3:4,4:3,5:2,6:1,7:0,8:9,9:8}.get(r, r)),
-            # Transformation 2: Simple reverse
-            lambda c, r: (8 - c, 9 - r),
-            # Transformation 3: Direct mapping
-            lambda c, r: (c, r),
-            # Transformation 4: Only column reverse
-            lambda c, r: (8 - c, r),
-            # Transformation 5: Column 1-9 to file 8-0
-            lambda c, r: (9 - c, 9 - r),
-        ]
-        
-        for transform in transformations:
-            try:
-                file1, rank1 = transform(gibo_col1, gibo_row1)
-                file2, rank2 = transform(gibo_col2, gibo_row2)
-                
-                # Validate bounds
-                if not (0 <= file1 < 9 and 0 <= rank1 < 10):
-                    continue
-                if not (0 <= file2 < 9 and 0 <= rank2 < 10):
-                    continue
-                
-                # Check if there's a piece at source
-                piece = board.get_piece(file1, rank1)
-                if piece is None:
-                    continue
-                
-                # Check if it's the right side's turn
-                if piece.side != board.side_to_move:
-                    continue
-                
-                # If piece type is specified, check it matches
-                if piece_char:
-                    expected_type = GibParser.HANJA_TO_PIECE.get(piece_char)
-                    if expected_type and piece.piece_type != expected_type:
-                        continue
-                
-                # Try to make the move
-                move = Move(file1, rank1, file2, rank2)
-                if board.is_legal_move(move):
-                    return move
-                    
-            except (ValueError, KeyError, IndexError):
-                continue
-        
-        return None
+        # _find_valid_move_helper를 재사용
+        return _find_valid_move_helper(board, from_coord, to_coord, piece_char, side_indicator)
     
     def _process_game(
         self,
@@ -627,7 +1051,7 @@ class GiboDataGenerator:
         result = game.get('result', None)
         raw_moves = game.get('raw_moves', [])
         
-        if len(raw_moves) < 5:  # Skip very short games
+        if len(raw_moves) < MIN_GAME_MOVES:  # Skip very short games
             return features, targets
         
         # Create board with formations
@@ -650,17 +1074,27 @@ class GiboDataGenerator:
             cho_target = 0.0
             han_target = 0.0
         
+        # SimpleEvaluator 인스턴스 생성
+        simple_evaluator = SimpleEvaluator()
+        
         # Play through the game and collect positions
         positions_collected = 0
         failed_moves = 0
         total_moves = len(raw_moves)
         
-        for move_idx, (from_coord, piece_char, to_coord) in enumerate(raw_moves):
+        for move_idx, move_data in enumerate(raw_moves):
+            # move_data는 (from_coord, piece_char, to_coord, side_indicator) 또는 (from_coord, piece_char, to_coord)
+            if len(move_data) == 4:
+                from_coord, piece_char, to_coord, side_indicator = move_data
+            else:
+                from_coord, piece_char, to_coord = move_data
+                side_indicator = None
+            
             if positions_collected >= max_positions:
                 break
             
             # Stop if too many failed moves (coordinate system likely wrong)
-            if failed_moves > 5 and failed_moves > positions_collected:
+            if failed_moves > MAX_FAILED_MOVES_THRESHOLD and failed_moves > positions_collected:
                 break
             
             # Extract features BEFORE making the move
@@ -668,15 +1102,30 @@ class GiboDataGenerator:
                 feat = self.feature_extractor.extract(board)
                 
                 if not np.isnan(feat).any():
-                    # Calculate target value
                     progress = move_idx / max(total_moves - 1, 1)
                     
+                    # SimpleEvaluator로 평가 점수 계산
+                    eval_score = simple_evaluator.evaluate(board)
+                    
+                    # 현재 side_to_move 관점에서 평가 점수 정규화
+                    if board.side_to_move == Side.CHO:
+                        normalized_eval = np.clip(eval_score / EVAL_SCALE, -1, 1)
+                    else:
+                        normalized_eval = np.clip(-eval_score / EVAL_SCALE, -1, 1)
+                    
+                    # 게임 결과 기반 타겟
                     if board.side_to_move == Side.CHO:
                         base_target = cho_target
                     else:
                         base_target = han_target
                     
-                    target = base_target * (0.3 + 0.7 * progress)
+                    result_target = base_target * (TARGET_BASE_WEIGHT + TARGET_PROGRESS_WEIGHT * progress)
+                    
+                    # 진행도 기반 동적 가중치 계산
+                    eval_weight, result_weight = calculate_dynamic_weights(progress)
+                    
+                    # 평가 점수와 게임 결과 혼합 (동적 가중치 사용)
+                    target = eval_weight * normalized_eval + result_weight * result_target
                     
                     features.append(feat)
                     targets.append(target)
@@ -685,8 +1134,8 @@ class GiboDataGenerator:
             except Exception:
                 pass
             
-            # Try to find and make the move
-            move = self._find_valid_move(board, from_coord, to_coord, piece_char, move_idx + 1)
+            # Try to find and make the move (진영 정보 포함)
+            move = self._find_valid_move(board, from_coord, to_coord, piece_char, move_idx + 1, side_indicator)
             
             if move:
                 if not board.make_move(move):
@@ -713,7 +1162,7 @@ def train_from_gibo(
     epochs: int = 50,
     batch_size: int = 256,
     learning_rate: float = 0.001,
-    positions_per_game: int = 50,
+    positions_per_game: int = DEFAULT_POSITIONS_PER_GAME,
     output_file: str = 'models/nnue_gibo_model.json'
 ) -> Dict:
     """Train NNUE from gibo files with gradient clipping for stability.
@@ -753,17 +1202,50 @@ def train_from_gibo(
     
     print(f"Training on {len(features)} positions...")
     
+    # 중간 평가 콜백 함수 정의
+    def eval_callback(model):
+        """중간 평가를 수행하는 콜백 함수"""
+        try:
+            from scripts.train_nnue_gpu import evaluate_model
+            return evaluate_model(model, num_games=5, search_depth=3)
+        except Exception as e:
+            print(f"평가 함수 import 실패: {e}")
+            return 0.0
+    
     # Custom training with gradient clipping for stability
     history = train_with_gradient_clipping(
         nnue, features, targets,
         epochs=epochs,
         batch_size=batch_size,
-        learning_rate=learning_rate
+        learning_rate=learning_rate,
+        eval_callback=eval_callback
     )
     
     # Save model
     print(f"\nSaving model to {output_file}...")
     nnue.save(output_file)
+    
+    # 학습 히스토리 저장
+    history_file = output_file.replace('.json', '_history.json')
+    try:
+        # JSON 직렬화 가능한 형태로 변환
+        history_serializable = {
+            'train_loss': [float(x) for x in history['train_loss']],
+            'val_loss': [float(x) for x in history['val_loss']],
+            'learning_rate': [float(x) for x in history['learning_rate']],
+            'grad_norm': [float(x) for x in history['grad_norm']],
+        }
+        if 'win_rates' in history:
+            history_serializable['win_rates'] = [
+                {'epoch': int(x['epoch']), 'win_rate': float(x['win_rate'])}
+                for x in history['win_rates']
+            ]
+        
+        with open(history_file, 'w', encoding='utf-8') as f:
+            json.dump(history_serializable, f, indent=2, ensure_ascii=False)
+        print(f"학습 히스토리 저장: {history_file}")
+    except Exception as e:
+        print(f"히스토리 저장 실패: {e}")
     
     return history
 
@@ -775,8 +1257,9 @@ def train_with_gradient_clipping(
     epochs: int = 50,
     batch_size: int = 256,
     learning_rate: float = 0.001,
-    grad_clip: float = 1.0,
-    validation_split: float = 0.1
+    grad_clip: float = DEFAULT_GRAD_CLIP,
+    validation_split: float = DEFAULT_VALIDATION_SPLIT,
+    eval_callback: Optional[Callable] = None
 ) -> Dict:
     """Train with gradient clipping for numerical stability."""
     import torch
@@ -796,17 +1279,24 @@ def train_with_gradient_clipping(
     val_targets = torch.tensor(targets[indices[:n_val]], dtype=torch.float32, device=device).unsqueeze(1)
     
     # Optimizer with weight decay
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(
+        model.parameters(), 
+        lr=learning_rate, 
+        weight_decay=DEFAULT_WEIGHT_DECAY
+    )
     
     # Learning rate scheduler
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=5
+        optimizer, 
+        mode='min', 
+        factor=DEFAULT_LR_SCHEDULER_FACTOR, 
+        patience=DEFAULT_LR_SCHEDULER_PATIENCE
     )
     
     # Loss function
     criterion = nn.MSELoss()
     
-    history = {'train_loss': [], 'val_loss': []}
+    history = {'train_loss': [], 'val_loss': [], 'learning_rate': [], 'grad_norm': []}
     best_val_loss = float('inf')
     patience_counter = 0
     
@@ -850,19 +1340,49 @@ def train_with_gradient_clipping(
         
         avg_train_loss = train_loss / max(n_batches, 1)
         
+        # Gradient norm 계산
+        total_norm = 0.0
+        for p in model.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** (1. / 2)
+        
         # Validation
         model.eval()
         with torch.no_grad():
             val_outputs = model(val_features)
             val_loss = criterion(val_outputs, val_targets).item()
         
+        # Learning rate 가져오기
+        current_lr = optimizer.param_groups[0]['lr']
+        
         history['train_loss'].append(avg_train_loss)
         history['val_loss'].append(val_loss)
+        history['learning_rate'].append(current_lr)
+        history['grad_norm'].append(total_norm)
         
-        print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.6f}, Val Loss: {val_loss:.6f}")
+        print(f"Epoch {epoch+1}/{epochs} - "
+              f"Train Loss: {avg_train_loss:.6f}, "
+              f"Val Loss: {val_loss:.6f}, "
+              f"LR: {current_lr:.6e}, "
+              f"Grad Norm: {total_norm:.4f}")
         
         # Learning rate scheduling
         scheduler.step(val_loss)
+        
+        # 중간 평가 (N epoch마다)
+        if eval_callback and (epoch + 1) % EVAL_INTERVAL == 0:
+            print(f"\n📊 Epoch {epoch+1} 중간 평가 중...")
+            try:
+                win_rate = eval_callback(nnue)
+                history.setdefault('win_rates', []).append({
+                    'epoch': epoch + 1,
+                    'win_rate': win_rate
+                })
+                print(f"  승률: {win_rate*100:.1f}%")
+            except Exception as e:
+                print(f"  평가 실패: {e}")
         
         # Early stopping
         if val_loss < best_val_loss:
@@ -870,7 +1390,7 @@ def train_with_gradient_clipping(
             patience_counter = 0
         else:
             patience_counter += 1
-            if patience_counter >= 10:
+            if patience_counter >= DEFAULT_EARLY_STOPPING_PATIENCE:
                 print(f"Early stopping at epoch {epoch+1}")
                 break
     

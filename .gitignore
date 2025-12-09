@@ -17,5 +17,5 @@ htmlcov/
 *.log
 .DS_Store
 
-models/
+models/*.json
 .playwright-mcp/
