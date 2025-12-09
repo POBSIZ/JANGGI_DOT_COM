@@ -1,0 +1,1882 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>장기 AI 엔진</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700&display=swap");
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(
+          135deg,
+          #1a1a2e 0%,
+          #16213e 50%,
+          #0f3460 100%
+        );
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+      }
+
+      .container {
+        background: linear-gradient(145deg, #2d2d44 0%, #1f1f35 100%);
+        border-radius: 24px;
+        padding: 32px;
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5),
+          inset 0 1px 0 rgba(255, 255, 255, 0.1);
+        max-width: 1400px;
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      h1 {
+        text-align: center;
+        color: #e8d5b7;
+        margin-bottom: 28px;
+        font-size: 2.4em;
+        font-weight: 300;
+        letter-spacing: 4px;
+        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+      }
+
+      .controls {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        justify-content: center;
+      }
+
+      button {
+        padding: 14px 28px;
+        font-size: 15px;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        background: linear-gradient(135deg, #c9a66b 0%, #a07d4a 100%);
+        color: #1a1a2e;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        font-weight: 600;
+        letter-spacing: 1px;
+        box-shadow: 0 4px 15px rgba(201, 166, 107, 0.3);
+      }
+
+      button:hover {
+        background: linear-gradient(135deg, #d4b37a 0%, #b08d5a 100%);
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(201, 166, 107, 0.4);
+      }
+
+      button:active {
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        background: #4a4a5a;
+        color: #8a8a9a;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      button.secondary {
+        background: linear-gradient(135deg, #4a6fa5 0%, #3a5a8a 100%);
+        color: #e8e8f0;
+        box-shadow: 0 4px 15px rgba(74, 111, 165, 0.3);
+      }
+
+      button.secondary:hover {
+        background: linear-gradient(135deg, #5a7fb5 0%, #4a6a9a 100%);
+        box-shadow: 0 8px 25px rgba(74, 111, 165, 0.4);
+      }
+
+      button.error {
+        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        color: #ffffff;
+        box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+      }
+
+      button.error:hover {
+        background: linear-gradient(135deg, #e04d5d 0%, #d83343 100%);
+        box-shadow: 0 8px 25px rgba(220, 53, 69, 0.4);
+      }
+
+      .game-info {
+        text-align: center;
+        margin-bottom: 24px;
+      }
+
+      .main-content {
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: flex-start;
+      }
+
+      .board-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .board-wrapper {
+        position: relative;
+        background: linear-gradient(145deg, #c9a66b 0%, #a07d4a 100%);
+        padding: 20px;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4),
+          inset 0 2px 4px rgba(255, 255, 255, 0.2),
+          inset 0 -2px 4px rgba(0, 0, 0, 0.1);
+      }
+
+      #gameCanvas {
+        display: block;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      .status {
+        text-align: center;
+        padding: 16px 24px;
+        border-radius: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 1px;
+      }
+
+      .status.info {
+        background: rgba(74, 111, 165, 0.2);
+        color: #7eb3ff;
+        border: 1px solid rgba(74, 111, 165, 0.3);
+      }
+
+      .status.warning {
+        background: rgba(255, 193, 7, 0.15);
+        color: #ffc107;
+        border: 1px solid rgba(255, 193, 7, 0.3);
+      }
+
+      .status.success {
+        background: rgba(40, 167, 69, 0.15);
+        color: #5dd879;
+        border: 1px solid rgba(40, 167, 69, 0.3);
+      }
+
+      .status.error {
+        background: rgba(220, 53, 69, 0.15);
+        color: #ff6b7a;
+        border: 1px solid rgba(220, 53, 69, 0.3);
+      }
+
+      .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        pointer-events: none;
+      }
+
+      .toast {
+        background: rgba(45, 45, 68, 0.95);
+        backdrop-filter: blur(10px);
+        padding: 16px 24px;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        min-width: 300px;
+        max-width: 400px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        animation: slideIn 0.3s ease-out;
+        pointer-events: auto;
+        border-left: 4px solid;
+      }
+
+      .toast.error {
+        border-left-color: #ff6b7a;
+      }
+
+      .toast.error .toast-icon {
+        color: #ff6b7a;
+      }
+
+      .toast.success {
+        border-left-color: #5dd879;
+      }
+
+      .toast.success .toast-icon {
+        color: #5dd879;
+      }
+
+      .toast.info {
+        border-left-color: #7eb3ff;
+      }
+
+      .toast.info .toast-icon {
+        color: #7eb3ff;
+      }
+
+      .toast.warning {
+        border-left-color: #ffc107;
+      }
+
+      .toast.warning .toast-icon {
+        color: #ffc107;
+      }
+
+      .toast-icon {
+        font-size: 20px;
+        flex-shrink: 0;
+      }
+
+      .toast-content {
+        flex: 1;
+        font-size: 14px;
+        color: #e8e8f0;
+        line-height: 1.4;
+      }
+
+      .toast-close {
+        background: none;
+        border: none;
+        font-size: 20px;
+        color: #8a8a9a;
+        cursor: pointer;
+        padding: 0;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        transition: color 0.2s;
+      }
+
+      .toast-close:hover {
+        color: #e8e8f0;
+      }
+
+      @keyframes slideIn {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+
+      @keyframes slideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+      }
+
+      .toast.hiding {
+        animation: slideOut 0.3s ease-in forwards;
+      }
+
+      .move-info {
+        margin-top: 16px;
+        padding: 14px 18px;
+        background: rgba(201, 166, 107, 0.1);
+        border: 1px solid rgba(201, 166, 107, 0.2);
+        border-radius: 10px;
+        font-size: 14px;
+        color: #e8d5b7;
+      }
+
+      .move-info strong {
+        color: #c9a66b;
+      }
+
+      .side-panel {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 24px;
+        border-radius: 16px;
+        min-width: 280px;
+        max-width: 360px;
+      }
+
+      .side-panel h3 {
+        margin-bottom: 18px;
+        color: #e8d5b7;
+        font-size: 18px;
+        font-weight: 400;
+        letter-spacing: 2px;
+        border-bottom: 1px solid rgba(201, 166, 107, 0.2);
+        padding-bottom: 12px;
+      }
+
+      .history-panel {
+        max-height: 500px;
+        overflow-y: auto;
+      }
+
+      .history-panel::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .history-panel::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 3px;
+      }
+
+      .history-panel::-webkit-scrollbar-thumb {
+        background: rgba(201, 166, 107, 0.4);
+        border-radius: 3px;
+      }
+
+      .history-item {
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 8px;
+        border-left: 3px solid #4a6fa5;
+        font-size: 14px;
+        color: #b8b8c8;
+        transition: all 0.2s;
+      }
+
+      .history-item:hover {
+        background: rgba(255, 255, 255, 0.06);
+      }
+
+      .history-item.capture {
+        border-left-color: #ff6b7a;
+      }
+
+      .history-item strong {
+        color: #c9a66b;
+      }
+
+      .formation-selector {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 18px;
+      }
+
+      .formation-option {
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .formation-option:hover {
+        border-color: rgba(201, 166, 107, 0.4);
+        background: rgba(201, 166, 107, 0.1);
+      }
+
+      .formation-option.selected {
+        border-color: #c9a66b;
+        background: rgba(201, 166, 107, 0.15);
+      }
+
+      .formation-option strong {
+        display: block;
+        margin-bottom: 6px;
+        color: #e8d5b7;
+        font-size: 14px;
+      }
+
+      .formation-option small {
+        color: #8a8a9a;
+        font-size: 12px;
+      }
+
+      #moveHistory:empty::after {
+        content: "아직 이동이 없습니다";
+        display: block;
+        color: #6a6a7a;
+        text-align: center;
+        padding: 24px;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>장기 AI 엔진</h1>
+
+      <div class="controls">
+        <button id="newGameBtn">새 게임</button>
+        <button id="aiMoveBtn">AI 이동</button>
+        <button id="autoPlayBtn" class="secondary">AI 자동 진행</button>
+        <button id="resetBtn">리셋</button>
+        <button id="setupBtn" class="secondary">상차림 설정</button>
+        <button id="flipBoardBtn" class="secondary">보드 뒤집기</button>
+      </div>
+
+      <div class="game-info">
+        <div id="status" class="status info">게임을 시작하세요</div>
+      </div>
+
+      <div class="main-content">
+        <div class="board-container">
+          <div class="board-wrapper">
+            <canvas id="gameCanvas" width="520" height="580"></canvas>
+          </div>
+          <div id="moveInfo" class="move-info" style="display: none">
+            <strong>선택한 기물:</strong> <span id="selectedPiece"></span><br />
+            <strong>가능한 이동:</strong> <span id="possibleMoves"></span>
+          </div>
+        </div>
+
+        <div class="side-panel" id="setupPanel" style="display: none">
+          <h3>상차림 설정</h3>
+          
+          <div style="margin-bottom: 24px;">
+            <h4 style="color: #c9a66b; margin-bottom: 12px; font-size: 16px; font-weight: 600;">내 진영 선택</h4>
+            <div class="formation-selector" id="mySideSelector" style="display: flex; gap: 12px;">
+              <div class="formation-option" data-side="cho" style="flex: 1; text-align: center; padding: 16px;">
+                <strong>초</strong>
+                <small>내가 초 진영</small>
+              </div>
+              <div class="formation-option selected" data-side="han" style="flex: 1; text-align: center; padding: 16px;">
+                <strong>한</strong>
+                <small>내가 한 진영</small>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 24px;">
+            <h4 style="color: #c9a66b; margin-bottom: 12px; font-size: 16px; font-weight: 600;" id="myFormationLabel">나의 상차림 (한 측)</h4>
+            <div class="formation-selector" id="myFormationSelector">
+              <div class="formation-option" data-formation="상마상마" data-side="my">
+                <strong>상마상마</strong>
+                <small id="myFormationDesc1">b1=상, c1=마, g1=상, h1=마</small>
+              </div>
+              <div class="formation-option" data-formation="마상마상" data-side="my">
+                <strong>마상마상</strong>
+                <small id="myFormationDesc2">b1=마, c1=상, g1=마, h1=상</small>
+              </div>
+              <div class="formation-option selected" data-formation="마상상마" data-side="my">
+                <strong>마상상마</strong>
+                <small id="myFormationDesc3">b1=마, c1=상, g1=상, h1=마 (기본값)</small>
+              </div>
+              <div class="formation-option" data-formation="상마마상" data-side="my">
+                <strong>상마마상</strong>
+                <small id="myFormationDesc4">b1=상, c1=마, g1=마, h1=상</small>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 24px;">
+            <h4 style="color: #c9a66b; margin-bottom: 12px; font-size: 16px; font-weight: 600;" id="opponentFormationLabel">상대의 상차림 (초 측)</h4>
+            <div class="formation-selector" id="opponentFormationSelector">
+              <div class="formation-option" data-formation="상마상마" data-side="opponent">
+                <strong>상마상마</strong>
+                <small id="opponentFormationDesc1">b10=상, c10=마, g10=상, h10=마</small>
+              </div>
+              <div class="formation-option" data-formation="마상마상" data-side="opponent">
+                <strong>마상마상</strong>
+                <small id="opponentFormationDesc2">b10=마, c10=상, g10=마, h10=상</small>
+              </div>
+              <div class="formation-option selected" data-formation="마상상마" data-side="opponent">
+                <strong>마상상마</strong>
+                <small id="opponentFormationDesc3">b10=마, c10=상, g10=상, h10=마 (기본값)</small>
+              </div>
+              <div class="formation-option" data-formation="상마마상" data-side="opponent">
+                <strong>상마마상</strong>
+                <small id="opponentFormationDesc4">b10=상, c10=마, g10=마, h10=상</small>
+              </div>
+            </div>
+          </div>
+
+          <button id="applyFormationBtn" style="width: 100%">
+            상차림 적용
+          </button>
+        </div>
+
+        <div class="side-panel history-panel">
+          <h3>이동 기록</h3>
+          <div id="moveHistory"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+      // ============================================
+      // Canvas-based Janggi Board Renderer
+      // ============================================
+
+      const API_BASE = "/api";
+      const GAME_ID = "default";
+
+      // Canvas and context
+      const canvas = document.getElementById("gameCanvas");
+      const ctx = canvas.getContext("2d");
+
+      // Board dimensions
+      const CANVAS_WIDTH = 520;
+      const CANVAS_HEIGHT = 580;
+      const PADDING = 40;
+      const CELL_WIDTH = (CANVAS_WIDTH - PADDING * 2) / 8;
+      const CELL_HEIGHT = (CANVAS_HEIGHT - PADDING * 2) / 9;
+      const PIECE_RADIUS = 24;
+
+      // Game state
+      let boardData = [];
+      let boardKorean = [];
+      let legalMoves = [];
+      let selectedSquare = null;
+      let possibleMoveSquares = [];
+      let lastMoveFrom = null;
+      let lastMoveTo = null;
+      let inCheckSquare = null;
+      let hoverSquare = null;
+      let boardFlipped = false; // 보드 뒤집기 상태
+      let mySide = "han"; // 내 진영: "cho" 또는 "han"
+      let isGameOver = false; // 게임 종료 상태
+      let isAutoPlaying = false; // AI 자동 진행 중 여부
+
+      // Animation state
+      let animatingPiece = null;
+      let particles = [];
+      let selectionPulse = 0;
+      let possibleMovePulse = 0;
+      let pieceAppearAnimations = [];
+      let isAnimationLoopRunning = false;
+      let lastFrameTime = 0;
+
+      // Colors
+      const COLORS = {
+        boardBg: "#c9a66b",
+        boardLine: "#3d2914",
+        palaceLine: "#3d2914",
+        pieceBase: "#faf6e8",
+        pieceBorder: "#2d2d2d",
+        hanColor: "#c41e3a",
+        choColor: "#1a5fb4",
+        selectedGlow: "#90ee90",
+        possibleMove: "rgba(74, 144, 226, 0.6)",
+        captureMove: "rgba(220, 53, 69, 0.7)",
+        lastMoveFrom: "rgba(255, 215, 0, 0.4)",
+        lastMoveTo: "rgba(50, 205, 50, 0.4)",
+        checkGlow: "#ff0000",
+        hoverGlow: "rgba(255, 255, 255, 0.4)",
+      };
+
+      // ============================================
+      // Easing functions
+      // ============================================
+
+      const Easing = {
+        // Smooth deceleration
+        easeOutCubic: (t) => 1 - Math.pow(1 - t, 3),
+        
+        // Bounce at end
+        easeOutBounce: (t) => {
+          const n1 = 7.5625;
+          const d1 = 2.75;
+          if (t < 1 / d1) return n1 * t * t;
+          if (t < 2 / d1) return n1 * (t -= 1.5 / d1) * t + 0.75;
+          if (t < 2.5 / d1) return n1 * (t -= 2.25 / d1) * t + 0.9375;
+          return n1 * (t -= 2.625 / d1) * t + 0.984375;
+        },
+        
+        // Elastic bounce
+        easeOutElastic: (t) => {
+          if (t === 0 || t === 1) return t;
+          return Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1;
+        },
+        
+        // Back overshoot
+        easeOutBack: (t) => {
+          const c1 = 1.70158;
+          const c3 = c1 + 1;
+          return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+        },
+        
+        // Smooth start and end
+        easeInOutQuad: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,
+      };
+
+      // ============================================
+      // Coordinate conversion functions
+      // ============================================
+
+      function fileRankToPixel(file, rank) {
+        // 보드가 뒤집힌 경우: 파일과 랭크를 반대로 변환
+        let displayFile = boardFlipped ? (8 - file) : file;
+        let displayRank = boardFlipped ? (9 - rank) : rank;
+        
+        const x = PADDING + displayFile * CELL_WIDTH;
+        const y = PADDING + (9 - displayRank) * CELL_HEIGHT;
+        return { x, y };
+      }
+
+      function pixelToFileRank(px, py) {
+        const displayFile = Math.round((px - PADDING) / CELL_WIDTH);
+        const rankFromTop = Math.round((py - PADDING) / CELL_HEIGHT);
+        let displayRank = 9 - rankFromTop;
+
+        // 보드가 뒤집힌 경우: 화면 좌표를 실제 보드 좌표로 변환
+        const file = boardFlipped ? (8 - displayFile) : displayFile;
+        const rank = boardFlipped ? (9 - displayRank) : displayRank;
+
+        if (file >= 0 && file <= 8 && rank >= 0 && rank <= 9) {
+          return { file, rank };
+        }
+        return null;
+      }
+
+      function squareToNotation(file, rank) {
+        return String.fromCharCode(97 + file) + (rank + 1);
+      }
+
+      // ============================================
+      // Particle System
+      // ============================================
+
+      class Particle {
+        constructor(x, y, color, type = 'burst') {
+          this.x = x;
+          this.y = y;
+          this.color = color;
+          this.type = type;
+          this.life = 1;
+          this.decay = 0.02 + Math.random() * 0.02;
+          
+          if (type === 'burst') {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 2 + Math.random() * 4;
+            this.vx = Math.cos(angle) * speed;
+            this.vy = Math.sin(angle) * speed;
+            this.size = 3 + Math.random() * 5;
+            this.gravity = 0.15;
+          } else if (type === 'sparkle') {
+            this.vx = (Math.random() - 0.5) * 2;
+            this.vy = -1 - Math.random() * 2;
+            this.size = 2 + Math.random() * 3;
+            this.gravity = 0.05;
+          } else if (type === 'ring') {
+            this.radius = 0;
+            this.maxRadius = 40 + Math.random() * 20;
+            this.decay = 0.03;
+          }
+        }
+
+        update() {
+          this.life -= this.decay;
+          
+          if (this.type === 'burst' || this.type === 'sparkle') {
+            this.x += this.vx;
+            this.y += this.vy;
+            this.vy += this.gravity;
+            this.vx *= 0.98;
+            this.size *= 0.97;
+          } else if (this.type === 'ring') {
+            this.radius += (this.maxRadius - this.radius) * 0.1;
+          }
+          
+          return this.life > 0;
+        }
+
+        draw(ctx) {
+          ctx.globalAlpha = this.life;
+          
+          if (this.type === 'burst' || this.type === 'sparkle') {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+            ctx.fill();
+          } else if (this.type === 'ring') {
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 3 * this.life;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          
+          ctx.globalAlpha = 1;
+        }
+      }
+
+      function createCaptureEffect(x, y, isHan) {
+        const color = isHan ? COLORS.hanColor : COLORS.choColor;
+        const colors = [color, '#ffd700', '#ffffff'];
+        
+        // Burst particles
+        for (let i = 0; i < 15; i++) {
+          particles.push(new Particle(x, y, colors[Math.floor(Math.random() * colors.length)], 'burst'));
+        }
+        
+        // Sparkles
+        for (let i = 0; i < 8; i++) {
+          particles.push(new Particle(x, y, '#ffffff', 'sparkle'));
+        }
+        
+        // Expanding ring
+        particles.push(new Particle(x, y, color, 'ring'));
+      }
+
+      function createMoveTrail(x, y, color) {
+        for (let i = 0; i < 3; i++) {
+          const p = new Particle(x, y, color, 'sparkle');
+          p.decay = 0.05;
+          p.size = 2;
+          particles.push(p);
+        }
+      }
+
+      // ============================================
+      // Drawing functions
+      // ============================================
+
+      function drawBoard() {
+        // Clear canvas
+        ctx.fillStyle = COLORS.boardBg;
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        ctx.strokeStyle = COLORS.boardLine;
+        ctx.lineWidth = 1.5;
+
+        // Draw horizontal lines
+        for (let i = 0; i < 10; i++) {
+          const y = PADDING + i * CELL_HEIGHT;
+          ctx.beginPath();
+          ctx.moveTo(PADDING, y);
+          ctx.lineTo(CANVAS_WIDTH - PADDING, y);
+          ctx.stroke();
+        }
+
+        // Draw vertical lines
+        for (let i = 0; i < 9; i++) {
+          const x = PADDING + i * CELL_WIDTH;
+          ctx.beginPath();
+          ctx.moveTo(x, PADDING);
+          ctx.lineTo(x, CANVAS_HEIGHT - PADDING);
+          ctx.stroke();
+        }
+
+        // Draw palace diagonals
+        ctx.strokeStyle = COLORS.palaceLine;
+
+        // Top palace
+        const topPalace = {
+          left: fileRankToPixel(3, 9),
+          right: fileRankToPixel(5, 9),
+          bottomLeft: fileRankToPixel(3, 7),
+          bottomRight: fileRankToPixel(5, 7),
+        };
+
+        ctx.beginPath();
+        ctx.moveTo(topPalace.left.x, topPalace.left.y);
+        ctx.lineTo(topPalace.bottomRight.x, topPalace.bottomRight.y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(topPalace.right.x, topPalace.right.y);
+        ctx.lineTo(topPalace.bottomLeft.x, topPalace.bottomLeft.y);
+        ctx.stroke();
+
+        // Bottom palace
+        const bottomPalace = {
+          left: fileRankToPixel(3, 2),
+          right: fileRankToPixel(5, 2),
+          bottomLeft: fileRankToPixel(3, 0),
+          bottomRight: fileRankToPixel(5, 0),
+        };
+
+        ctx.beginPath();
+        ctx.moveTo(bottomPalace.left.x, bottomPalace.left.y);
+        ctx.lineTo(bottomPalace.bottomRight.x, bottomPalace.bottomRight.y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(bottomPalace.right.x, bottomPalace.right.y);
+        ctx.lineTo(bottomPalace.bottomLeft.x, bottomPalace.bottomLeft.y);
+        ctx.stroke();
+      }
+
+      function drawHighlights(deltaTime) {
+        // Update pulse values
+        selectionPulse += deltaTime * 0.004;
+        possibleMovePulse += deltaTime * 0.003;
+
+        // Draw last move highlights with fade effect
+        if (lastMoveFrom) {
+          const { x, y } = fileRankToPixel(lastMoveFrom.file, lastMoveFrom.rank);
+          const gradient = ctx.createRadialGradient(x, y, 0, x, y, PIECE_RADIUS + 10);
+          gradient.addColorStop(0, 'rgba(255, 215, 0, 0.3)');
+          gradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(x, y, PIECE_RADIUS + 10, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (lastMoveTo) {
+          const { x, y } = fileRankToPixel(lastMoveTo.file, lastMoveTo.rank);
+          const gradient = ctx.createRadialGradient(x, y, 0, x, y, PIECE_RADIUS + 10);
+          gradient.addColorStop(0, 'rgba(50, 205, 50, 0.3)');
+          gradient.addColorStop(1, 'rgba(50, 205, 50, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(x, y, PIECE_RADIUS + 10, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Draw possible moves with animated pulse
+        possibleMoveSquares.forEach((sq, index) => {
+          const { x, y } = fileRankToPixel(sq.file, sq.rank);
+          const hasPiece = getPieceAt(sq.file, sq.rank);
+          const pulseOffset = index * 0.3;
+          const pulse = Math.sin(possibleMovePulse + pulseOffset) * 0.3 + 0.7;
+
+          if (hasPiece) {
+            // Capture indicator - animated ring
+            const ringPulse = Math.sin(possibleMovePulse * 2 + pulseOffset) * 0.2 + 0.8;
+            ctx.strokeStyle = `rgba(220, 53, 69, ${ringPulse})`;
+            ctx.lineWidth = 3 + Math.sin(possibleMovePulse + pulseOffset) * 1;
+            ctx.beginPath();
+            ctx.arc(x, y, PIECE_RADIUS + 5 + Math.sin(possibleMovePulse + pulseOffset) * 2, 0, Math.PI * 2);
+            ctx.stroke();
+            
+            // Inner glow
+            const gradient = ctx.createRadialGradient(x, y, PIECE_RADIUS - 5, x, y, PIECE_RADIUS + 8);
+            gradient.addColorStop(0, 'rgba(220, 53, 69, 0)');
+            gradient.addColorStop(1, `rgba(220, 53, 69, ${0.2 * ringPulse})`);
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(x, y, PIECE_RADIUS + 8, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            // Empty square - animated filled circle
+            const size = 10 + Math.sin(possibleMovePulse + pulseOffset) * 3;
+            ctx.fillStyle = `rgba(74, 144, 226, ${0.5 * pulse})`;
+            ctx.beginPath();
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Outer ring
+            ctx.strokeStyle = `rgba(74, 144, 226, ${0.3 * pulse})`;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, size + 5, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        });
+
+        // Draw selection highlight with pulse
+        if (selectedSquare) {
+          const { x, y } = fileRankToPixel(selectedSquare.file, selectedSquare.rank);
+          const pulse = Math.sin(selectionPulse * 2) * 0.3 + 0.7;
+          const glowSize = PIECE_RADIUS + 6 + Math.sin(selectionPulse * 2) * 3;
+          
+          // Outer glow
+          const gradient = ctx.createRadialGradient(x, y, PIECE_RADIUS, x, y, glowSize + 10);
+          gradient.addColorStop(0, `rgba(144, 238, 144, ${0.4 * pulse})`);
+          gradient.addColorStop(1, 'rgba(144, 238, 144, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(x, y, glowSize + 10, 0, Math.PI * 2);
+          ctx.fill();
+          
+          // Main ring
+          ctx.strokeStyle = `rgba(144, 238, 144, ${pulse})`;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x, y, glowSize, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Draw hover highlight
+        if (hoverSquare && !selectedSquare) {
+          const piece = getPieceAt(hoverSquare.file, hoverSquare.rank);
+          if (piece) {
+            const { x, y } = fileRankToPixel(hoverSquare.file, hoverSquare.rank);
+            ctx.strokeStyle = COLORS.hoverGlow;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(x, y, PIECE_RADIUS + 4, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+
+        // Draw check indicator
+        if (inCheckSquare) {
+          const { x, y } = fileRankToPixel(inCheckSquare.file, inCheckSquare.rank);
+          const time = Date.now() / 300;
+          const pulse = Math.sin(time) * 0.4 + 0.6;
+          const glowSize = PIECE_RADIUS + 8 + Math.sin(time) * 4;
+
+          // Danger gradient
+          const gradient = ctx.createRadialGradient(x, y, PIECE_RADIUS - 5, x, y, glowSize + 15);
+          gradient.addColorStop(0, 'rgba(255, 0, 0, 0)');
+          gradient.addColorStop(0.5, `rgba(255, 0, 0, ${0.3 * pulse})`);
+          gradient.addColorStop(1, 'rgba(255, 0, 0, 0)');
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(x, y, glowSize + 15, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Pulsing ring
+          ctx.strokeStyle = `rgba(255, 0, 0, ${pulse})`;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(x, y, glowSize, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      function drawPiece(file, rank, pieceData, koreanData, options = {}) {
+        const {
+          scale = 1,
+          offsetX = 0,
+          offsetY = 0,
+          alpha = 1,
+          shadowScale = 1,
+          rotation = 0
+        } = options;
+
+        // Ensure scale is positive to prevent negative radius
+        const safeScale = Math.max(0.01, scale);
+        
+        const { x, y } = fileRankToPixel(file, rank);
+        const drawX = x + offsetX;
+        const drawY = y + offsetY;
+        const radius = PIECE_RADIUS * safeScale;
+
+        const isHan = pieceData[0] === "h";
+        const pieceColor = isHan ? COLORS.hanColor : COLORS.choColor;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        
+        if (rotation !== 0) {
+          ctx.translate(drawX, drawY);
+          ctx.rotate(rotation);
+          ctx.translate(-drawX, -drawY);
+        }
+
+        // Draw piece shadow (larger when hovering/moving)
+        const shadowOffset = 2 + (shadowScale - 1) * 4;
+        const shadowBlur = 3 + (shadowScale - 1) * 8;
+        ctx.fillStyle = `rgba(0, 0, 0, ${0.3 * shadowScale})`;
+        ctx.beginPath();
+        ctx.arc(drawX + shadowOffset, drawY + shadowOffset + (shadowScale - 1) * 3, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw piece background with gradient
+        const gradient = ctx.createRadialGradient(
+          drawX - radius * 0.3,
+          drawY - radius * 0.3,
+          0,
+          drawX,
+          drawY,
+          radius
+        );
+        gradient.addColorStop(0, "#fffef8");
+        gradient.addColorStop(0.7, "#f5f0e0");
+        gradient.addColorStop(1, "#e8e0d0");
+
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(drawX, drawY, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw piece border
+        ctx.strokeStyle = pieceColor;
+        ctx.lineWidth = 2.5 * safeScale;
+        ctx.beginPath();
+        ctx.arc(drawX, drawY, Math.max(1, radius - 1), 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Inner subtle border (only if radius is big enough)
+        if (radius > 5) {
+          ctx.strokeStyle = `rgba(${isHan ? '196, 30, 58' : '26, 95, 180'}, 0.3)`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.arc(drawX, drawY, radius - 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Draw piece character
+        if (koreanData && koreanData.name) {
+          ctx.fillStyle = pieceColor;
+          ctx.font = `bold ${Math.floor(22 * safeScale)}px "Noto Serif KR", serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          
+          // Text shadow
+          ctx.fillStyle = `rgba(0, 0, 0, 0.2)`;
+          ctx.fillText(koreanData.name, drawX + 1, drawY + 2);
+          
+          // Main text
+          ctx.fillStyle = pieceColor;
+          ctx.fillText(koreanData.name, drawX, drawY + 1);
+        }
+
+        ctx.restore();
+      }
+
+      function drawPieces(deltaTime) {
+        if (!boardData || boardData.length === 0) return;
+
+        // Update appear animations
+        pieceAppearAnimations = pieceAppearAnimations.filter(anim => {
+          anim.progress += deltaTime / anim.duration;
+          return anim.progress < 1;
+        });
+
+        for (let rankIdx = 0; rankIdx < 10; rankIdx++) {
+          for (let fileIdx = 0; fileIdx < 9; fileIdx++) {
+            const piece = boardData[rankIdx]?.[fileIdx];
+            if (!piece) continue;
+
+            const rank = 9 - rankIdx;
+            
+            // Skip animating piece
+            if (animatingPiece && animatingPiece.fromFile === fileIdx && animatingPiece.fromRank === rank) {
+              continue;
+            }
+
+            const koreanData = boardKorean[rankIdx]?.[fileIdx];
+            
+            // Check for appear animation
+            const appearAnim = pieceAppearAnimations.find(
+              a => a.file === fileIdx && a.rank === rank
+            );
+            
+            // Check if this piece is being hovered
+            const isHovered = hoverSquare && hoverSquare.file === fileIdx && hoverSquare.rank === rank;
+            const isSelected = selectedSquare && selectedSquare.file === fileIdx && selectedSquare.rank === rank;
+            
+            let options = {};
+            
+            if (appearAnim) {
+              // Skip if animation hasn't started yet (progress < 0 means waiting for delay)
+              if (appearAnim.progress < 0) {
+                continue; // Don't draw this piece yet
+              }
+              // Use easeOutCubic instead of easeOutBack to avoid negative values
+              const t = Easing.easeOutCubic(Math.min(1, appearAnim.progress));
+              // Ensure scale is never negative or zero
+              const safeScale = Math.max(0.01, t);
+              options = {
+                scale: safeScale,
+                alpha: Math.max(0, t),
+                offsetY: (1 - t) * -30
+              };
+            } else if (isSelected) {
+              // Selected piece floats slightly
+              const float = Math.sin(selectionPulse * 2) * 2;
+              options = {
+                offsetY: -3 + float,
+                shadowScale: 1.3
+              };
+            } else if (isHovered && !selectedSquare) {
+              // Hovered piece lifts up
+              options = {
+                offsetY: -4,
+                shadowScale: 1.2
+              };
+            }
+
+            drawPiece(fileIdx, rank, piece, koreanData, options);
+          }
+        }
+
+        // Draw animating piece on top
+        if (animatingPiece) {
+          drawPiece(
+            animatingPiece.fromFile,
+            animatingPiece.fromRank,
+            animatingPiece.piece,
+            animatingPiece.korean,
+            {
+              scale: animatingPiece.scale,
+              offsetX: animatingPiece.offsetX,
+              offsetY: animatingPiece.offsetY,
+              shadowScale: animatingPiece.shadowScale,
+              rotation: animatingPiece.rotation || 0
+            }
+          );
+        }
+      }
+
+      function drawParticles() {
+        particles = particles.filter(p => {
+          p.draw(ctx);
+          return p.update();
+        });
+      }
+
+      function getPieceAt(file, rank) {
+        const rankIdx = 9 - rank;
+        return boardData[rankIdx]?.[file] || null;
+      }
+
+      // ============================================
+      // Main render loop
+      // ============================================
+
+      function render(timestamp = 0) {
+        // Clamp deltaTime to prevent huge jumps on first frame or after tab switch
+        let deltaTime = timestamp - lastFrameTime;
+        if (deltaTime > 100) deltaTime = 16; // Cap at ~60fps equivalent
+        lastFrameTime = timestamp;
+
+        drawBoard();
+        drawHighlights(deltaTime);
+        drawPieces(deltaTime);
+        drawParticles();
+
+        // Continue animation loop if needed
+        if (needsAnimation()) {
+          requestAnimationFrame(render);
+        } else {
+          isAnimationLoopRunning = false;
+        }
+      }
+
+      function needsAnimation() {
+        return animatingPiece !== null ||
+               particles.length > 0 ||
+               pieceAppearAnimations.length > 0 ||
+               selectedSquare !== null ||
+               possibleMoveSquares.length > 0 ||
+               inCheckSquare !== null;
+      }
+
+      function startAnimationLoop() {
+        if (!isAnimationLoopRunning) {
+          isAnimationLoopRunning = true;
+          lastFrameTime = performance.now();
+          requestAnimationFrame(render);
+        }
+      }
+
+      // ============================================
+      // Move Animation System
+      // ============================================
+
+      function animateMove(fromFile, fromRank, toFile, toRank, capturedPiece, callback) {
+        const piece = getPieceAt(fromFile, fromRank);
+        if (!piece) {
+          if (callback) callback();
+          return;
+        }
+
+        const fromRankIdx = 9 - fromRank;
+        const korean = boardKorean[fromRankIdx]?.[fromFile];
+        const isHan = piece[0] === 'h';
+
+        const fromPos = fileRankToPixel(fromFile, fromRank);
+        const toPos = fileRankToPixel(toFile, toRank);
+        
+        // Calculate distance for duration
+        const dx = toPos.x - fromPos.x;
+        const dy = toPos.y - fromPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const duration = Math.min(400, Math.max(200, distance * 1.2));
+
+        const startTime = performance.now();
+
+        // Calculate arc height based on distance
+        const arcHeight = Math.min(50, distance * 0.3);
+
+        animatingPiece = {
+          piece,
+          korean,
+          fromFile,
+          fromRank,
+          offsetX: 0,
+          offsetY: 0,
+          scale: 1,
+          shadowScale: 1,
+          rotation: 0
+        };
+
+        function animate(currentTime) {
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+
+          // Position with arc trajectory
+          const linearProgress = Easing.easeOutCubic(progress);
+          animatingPiece.offsetX = dx * linearProgress;
+          
+          // Parabolic arc for Y
+          const arcProgress = progress;
+          const arc = -4 * arcHeight * arcProgress * (arcProgress - 1);
+          animatingPiece.offsetY = dy * linearProgress - arc;
+
+          // Scale: slightly larger during flight, then settle
+          if (progress < 0.5) {
+            animatingPiece.scale = 1 + Easing.easeOutCubic(progress * 2) * 0.15;
+            animatingPiece.shadowScale = 1 + progress * 0.6;
+          } else {
+            animatingPiece.scale = 1.15 - Easing.easeOutBounce((progress - 0.5) * 2) * 0.15;
+            animatingPiece.shadowScale = 1.3 - (progress - 0.5) * 0.6;
+          }
+
+          // Slight rotation during movement
+          animatingPiece.rotation = Math.sin(progress * Math.PI) * 0.1;
+
+          // Create trail particles
+          if (progress < 0.8 && Math.random() < 0.3) {
+            const trailX = fromPos.x + animatingPiece.offsetX;
+            const trailY = fromPos.y + animatingPiece.offsetY;
+            createMoveTrail(trailX, trailY, isHan ? COLORS.hanColor : COLORS.choColor);
+          }
+
+          render(currentTime);
+
+          if (progress < 1) {
+            requestAnimationFrame(animate);
+          } else {
+            // Landing effect
+            if (capturedPiece) {
+              createCaptureEffect(toPos.x, toPos.y, capturedPiece[0] === 'h');
+            }
+            
+            animatingPiece = null;
+            startAnimationLoop();
+            if (callback) callback();
+          }
+        }
+
+        requestAnimationFrame(animate);
+      }
+
+      // ============================================
+      // Piece Appear Animation
+      // ============================================
+
+      function animatePiecesAppear() {
+        pieceAppearAnimations = [];
+        
+        for (let rankIdx = 0; rankIdx < 10; rankIdx++) {
+          for (let fileIdx = 0; fileIdx < 9; fileIdx++) {
+            const piece = boardData[rankIdx]?.[fileIdx];
+            if (piece) {
+              const rank = 9 - rankIdx;
+              // Calculate delay based on distance from center
+              const distFromCenter = Math.abs(rank - 4.5) + Math.abs(fileIdx - 4);
+              const delay = distFromCenter * 20; // Reduced delay multiplier
+              
+              pieceAppearAnimations.push({
+                file: fileIdx,
+                rank: rank,
+                progress: -delay / 400, // Start in negative (waiting state)
+                duration: 350
+              });
+            }
+          }
+        }
+        
+        startAnimationLoop();
+      }
+
+      // ============================================
+      // Game logic
+      // ============================================
+
+      async function initGame(formation = null, hanFormation = null, choFormation = null) {
+        try {
+          const body = {
+            game_id: GAME_ID,
+            depth: 3,
+            use_nnue: true,
+          };
+          
+          // Backward compatibility: if formation is provided, use it for both sides
+          if (formation) {
+            body.formation = formation;
+          } else if (hanFormation || choFormation) {
+            // Use separate formations
+            if (hanFormation) body.han_formation = hanFormation;
+            if (choFormation) body.cho_formation = choFormation;
+          }
+          
+          const response = await fetch(`${API_BASE}/new-game`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (response.ok) {
+            clearSelection();
+            lastMoveFrom = null;
+            lastMoveTo = null;
+            isGameOver = false; // 게임 종료 상태 초기화
+            isAutoPlaying = false; // 자동 진행 상태 초기화
+            document.getElementById("aiMoveBtn").disabled = false; // AI 버튼 활성화
+            updateAutoPlayButton(); // 자동 진행 버튼 상태 업데이트
+            await updateBoard(true);
+          }
+        } catch (error) {
+          console.error("Failed to initialize game:", error);
+          showToast("게임 초기화 실패", "error");
+        }
+      }
+
+      async function updateBoard(animateAppear = false) {
+        try {
+          const response = await fetch(`${API_BASE}/board/${GAME_ID}`);
+          const data = await response.json();
+
+          boardData = data.board || [];
+          boardKorean = data.board_korean || [];
+          legalMoves = data.legal_moves || [];
+          
+          // 게임 종료 상태 업데이트
+          isGameOver = data.game_over || false;
+          
+          // 게임이 종료되면 AI 이동 버튼 비활성화 및 자동 진행 중지
+          document.getElementById("aiMoveBtn").disabled = isGameOver;
+          if (isGameOver && isAutoPlaying) {
+            isAutoPlaying = false;
+            updateAutoPlayButton();
+          }
+          updateAutoPlayButton();
+
+          updateStatus(data);
+          updateMoveHistory(data.move_history || []);
+
+          // Find king in check
+          inCheckSquare = null;
+          if (data.in_check) {
+            const kingChar = data.side_to_move === "HAN" ? "hK" : "cK";
+            for (let rankIdx = 0; rankIdx < 10; rankIdx++) {
+              for (let fileIdx = 0; fileIdx < 9; fileIdx++) {
+                if (boardData[rankIdx]?.[fileIdx] === kingChar) {
+                  inCheckSquare = { file: fileIdx, rank: 9 - rankIdx };
+                  break;
+                }
+              }
+              if (inCheckSquare) break;
+            }
+          }
+
+          if (animateAppear) {
+            animatePiecesAppear();
+          } else {
+            startAnimationLoop();
+            render(performance.now());
+          }
+        } catch (error) {
+          console.error("Failed to update board:", error);
+        }
+      }
+
+      function clearSelection() {
+        selectedSquare = null;
+        possibleMoveSquares = [];
+        document.getElementById("moveInfo").style.display = "none";
+        startAnimationLoop();
+      }
+
+      function selectSquare(file, rank) {
+        const piece = getPieceAt(file, rank);
+        if (!piece) return;
+
+        selectedSquare = { file, rank };
+        const squareKey = squareToNotation(file, rank);
+
+        const movesFromSquare = legalMoves.filter((m) => m.from === squareKey);
+        possibleMoveSquares = movesFromSquare.map((m) => {
+          const toFile = m.to.charCodeAt(0) - 97;
+          const toRank = parseInt(m.to.slice(1)) - 1;
+          return { file: toFile, rank: toRank };
+        });
+
+        const rankIdx = 9 - rank;
+        const korean = boardKorean[rankIdx]?.[file];
+        if (korean) {
+          document.getElementById("moveInfo").style.display = "block";
+          document.getElementById("selectedPiece").textContent =
+            korean.full_name || korean.name;
+          document.getElementById("possibleMoves").textContent =
+            movesFromSquare.length > 0
+              ? movesFromSquare.map((m) => m.to).join(", ")
+              : "없음";
+        }
+
+        startAnimationLoop();
+      }
+
+      async function makeMove(fromFile, fromRank, toFile, toRank) {
+        const fromSquare = squareToNotation(fromFile, fromRank);
+        const toSquare = squareToNotation(toFile, toRank);
+        
+        // Check if there's a piece to capture
+        const capturedPiece = getPieceAt(toFile, toRank);
+
+        try {
+          const moveResponse = await fetch(`${API_BASE}/move`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              game_id: GAME_ID,
+              from_square: fromSquare,
+              to_square: toSquare,
+            }),
+          });
+
+          if (moveResponse.ok) {
+            const result = await moveResponse.json();
+            
+            lastMoveFrom = { file: fromFile, rank: fromRank };
+            lastMoveTo = { file: toFile, rank: toRank };
+
+            animateMove(fromFile, fromRank, toFile, toRank, capturedPiece, async () => {
+              clearSelection();
+              await updateBoard();
+              
+              // 무승부 처리
+              if (result.game_over && result.winner === null) {
+                if (result.reason === "draw_by_repetition") {
+                  showToast("동일 국면 3회 반복으로 무승부입니다!", "warning", 5000);
+                } else {
+                  showToast("무승부입니다!", "warning", 5000);
+                }
+              }
+            });
+          } else {
+            const error = await moveResponse.json();
+            showToast(`불법수: ${error.detail}`, "error");
+            clearSelection();
+          }
+        } catch (error) {
+          console.error("Failed to make move:", error);
+          clearSelection();
+        }
+      }
+
+      async function aiMove() {
+        // 게임이 종료된 경우 AI 이동 불가
+        if (isGameOver) {
+          showToast("게임이 종료되었습니다. 새 게임을 시작하세요.", "warning");
+          return;
+        }
+        
+        try {
+          const response = await fetch(`${API_BASE}/ai-move/${GAME_ID}`, {
+            method: "POST",
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+
+            const fromFile = data.move.from.charCodeAt(0) - 97;
+            const fromRank = parseInt(data.move.from.slice(1)) - 1;
+            const toFile = data.move.to.charCodeAt(0) - 97;
+            const toRank = parseInt(data.move.to.slice(1)) - 1;
+            
+            const capturedPiece = getPieceAt(toFile, toRank);
+
+            lastMoveFrom = { file: fromFile, rank: fromRank };
+            lastMoveTo = { file: toFile, rank: toRank };
+
+            animateMove(fromFile, fromRank, toFile, toRank, capturedPiece, async () => {
+              await updateBoard();
+              
+              // 무승부 처리
+              if (data.game_over && data.winner === null) {
+                if (data.reason === "draw_by_repetition") {
+                  showToast("동일 국면 3회 반복으로 무승부입니다!", "warning", 5000);
+                } else {
+                  showToast("무승부입니다!", "warning", 5000);
+                }
+              } else {
+                document.getElementById("status").textContent = 
+                  `AI: ${data.move.from} → ${data.move.to} (${data.nodes_searched} nodes)`;
+                document.getElementById("status").className = "status info";
+              }
+              
+              // 자동 진행 중이면 다음 수 진행
+              if (isAutoPlaying && !data.game_over) {
+                // 애니메이션 완료 후 약간의 딜레이를 두고 다음 수 진행
+                setTimeout(() => {
+                  if (isAutoPlaying && !isGameOver) {
+                    aiMove();
+                  }
+                }, 500);
+              }
+            });
+            
+            // 게임 종료 시 자동 진행 중지
+            if (data.game_over) {
+              isAutoPlaying = false;
+              updateAutoPlayButton();
+            }
+          } else {
+            const error = await response.json();
+            showToast(`AI 이동 실패: ${error.detail}`, "error");
+            // 에러 발생 시 자동 진행 중지
+            isAutoPlaying = false;
+            updateAutoPlayButton();
+          }
+        } catch (error) {
+          console.error("Failed to get AI move:", error);
+          showToast("AI 이동 중 오류 발생", "error");
+          // 에러 발생 시 자동 진행 중지
+          isAutoPlaying = false;
+          updateAutoPlayButton();
+        }
+      }
+      
+      async function toggleAutoPlay() {
+        if (isGameOver) {
+          showToast("게임이 종료되었습니다. 새 게임을 시작하세요.", "warning");
+          return;
+        }
+        
+        if (isAutoPlaying) {
+          // 자동 진행 중지
+          isAutoPlaying = false;
+          updateAutoPlayButton();
+          showToast("AI 자동 진행이 중지되었습니다.", "info");
+        } else {
+          // 자동 진행 시작
+          isAutoPlaying = true;
+          updateAutoPlayButton();
+          showToast("AI 자동 진행을 시작합니다.", "info");
+          // 첫 수 시작
+          await aiMove();
+        }
+      }
+      
+      function updateAutoPlayButton() {
+        const btn = document.getElementById("autoPlayBtn");
+        if (isAutoPlaying) {
+          btn.textContent = "자동 진행 중지";
+          btn.classList.add("error");
+          btn.classList.remove("secondary");
+        } else {
+          btn.textContent = "AI 자동 진행";
+          btn.classList.remove("error");
+          btn.classList.add("secondary");
+        }
+        btn.disabled = isGameOver;
+      }
+
+      function updateStatus(data) {
+        const statusEl = document.getElementById("status");
+
+        if (data.game_over) {
+          if (data.winner) {
+            // 승패가 결정된 경우
+            const winnerName = data.winner === "HAN" ? "한" : "초";
+            statusEl.textContent = `게임 종료! ${winnerName} 측 승리!`;
+            statusEl.className = "status success";
+          } else {
+            // 무승부인 경우
+            if (data.draw_reason === "repetition") {
+              statusEl.textContent = `게임 종료! 무승부 (동일 국면 3회 반복)`;
+            } else {
+              statusEl.textContent = `게임 종료! 무승부`;
+            }
+            statusEl.className = "status warning";
+          }
+        } else if (data.in_check) {
+          const sideName = data.side_to_move === "HAN" ? "한" : "초";
+          statusEl.textContent = `${sideName} 측이 장군 상태입니다!`;
+          statusEl.className = "status warning";
+        } else {
+          const sideName = data.side_to_move === "HAN" ? "한" : "초";
+          statusEl.textContent = `현재 차례: ${sideName}`;
+          statusEl.className = "status info";
+        }
+      }
+
+      function updateMoveHistory(history) {
+        const historyEl = document.getElementById("moveHistory");
+        historyEl.innerHTML = "";
+
+        history.forEach((move) => {
+          const item = document.createElement("div");
+          item.className = "history-item";
+          if (move.captured) {
+            item.classList.add("capture");
+          }
+          item.innerHTML = `<strong>${move.move_number}.</strong> ${move.notation}`;
+          historyEl.appendChild(item);
+        });
+
+        historyEl.scrollTop = historyEl.scrollHeight;
+      }
+
+      // ============================================
+      // Event handlers
+      // ============================================
+
+      canvas.addEventListener("click", (e) => {
+        if (animatingPiece) return; // Ignore clicks during animation
+        if (isGameOver) return; // 게임이 종료되면 클릭 무시
+
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const px = (e.clientX - rect.left) * scaleX;
+        const py = (e.clientY - rect.top) * scaleY;
+
+        const pos = pixelToFileRank(px, py);
+        if (!pos) return;
+
+        const { file, rank } = pos;
+
+        if (selectedSquare) {
+          const isPossibleMove = possibleMoveSquares.some(
+            (sq) => sq.file === file && sq.rank === rank
+          );
+
+          if (isPossibleMove) {
+            makeMove(selectedSquare.file, selectedSquare.rank, file, rank);
+          } else if (file === selectedSquare.file && rank === selectedSquare.rank) {
+            clearSelection();
+          } else {
+            const piece = getPieceAt(file, rank);
+            if (piece) {
+              selectSquare(file, rank);
+            } else {
+              clearSelection();
+            }
+          }
+        } else {
+          selectSquare(file, rank);
+        }
+      });
+
+      canvas.addEventListener("mousemove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const px = (e.clientX - rect.left) * scaleX;
+        const py = (e.clientY - rect.top) * scaleY;
+
+        const pos = pixelToFileRank(px, py);
+
+        if (pos) {
+          const newHover = { file: pos.file, rank: pos.rank };
+          if (!hoverSquare || hoverSquare.file !== newHover.file || hoverSquare.rank !== newHover.rank) {
+            hoverSquare = newHover;
+            if (!isAnimationLoopRunning) {
+              render(performance.now());
+            }
+          }
+        } else {
+          if (hoverSquare) {
+            hoverSquare = null;
+            if (!isAnimationLoopRunning) {
+              render(performance.now());
+            }
+          }
+        }
+      });
+
+      canvas.addEventListener("mouseleave", () => {
+        if (hoverSquare) {
+          hoverSquare = null;
+          if (!isAnimationLoopRunning) {
+            render(performance.now());
+          }
+        }
+      });
+
+      // ============================================
+      // Toast notifications
+      // ============================================
+
+      function showToast(message, type = "info", duration = 3000) {
+        const container = document.getElementById("toastContainer");
+        const toast = document.createElement("div");
+        toast.className = `toast ${type}`;
+
+        const icons = {
+          error: "⚠️",
+          success: "✓",
+          info: "ℹ️",
+          warning: "⚠️",
+        };
+
+        toast.innerHTML = `
+          <span class="toast-icon">${icons[type] || icons.info}</span>
+          <span class="toast-content">${message}</span>
+          <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+        `;
+
+        container.appendChild(toast);
+
+        setTimeout(() => {
+          toast.classList.add("hiding");
+          setTimeout(() => {
+            if (toast.parentElement) {
+              toast.remove();
+            }
+          }, 300);
+        }, duration);
+      }
+
+      // ============================================
+      // UI controls
+      // ============================================
+
+      function toggleSetupPanel() {
+        const panel = document.getElementById("setupPanel");
+        const isOpening = panel.style.display === "none";
+        panel.style.display = isOpening ? "block" : "none";
+        if (isOpening) {
+          updateFormationLabels();
+        }
+      }
+
+      // 상차림 좌우 반전 함수 (사용자가 보는 관점에서 실제 보드 좌표로 변환)
+      function flipFormation(formation) {
+        // 상차림 좌우 반전 매핑: b1↔h1, c1↔g1
+        const flipMap = {
+          "상마상마": "마상마상",  // b1=상, c1=마, g1=상, h1=마 → b1=마, c1=상, g1=마, h1=상
+          "마상마상": "상마상마",  // b1=마, c1=상, g1=마, h1=상 → b1=상, c1=마, g1=상, h1=마
+          "마상상마": "마상상마",  // 대칭이므로 동일
+          "상마마상": "상마마상",  // 대칭이므로 동일
+        };
+        return flipMap[formation] || formation;
+      }
+
+      // UI 레이블 업데이트
+      function updateFormationLabels() {
+        const mySideLabel = mySide === "cho" ? "초" : "한";
+        const opponentSideLabel = mySide === "cho" ? "한" : "초";
+        const myRank = mySide === "cho" ? "10" : "1";
+        const opponentRank = mySide === "cho" ? "1" : "10";
+        
+        document.getElementById("myFormationLabel").textContent = `나의 상차림 (${mySideLabel} 측)`;
+        document.getElementById("opponentFormationLabel").textContent = `상대의 상차림 (${opponentSideLabel} 측)`;
+        
+        // 내 상차림 설명 업데이트
+        document.getElementById("myFormationDesc1").textContent = `b${myRank}=상, c${myRank}=마, g${myRank}=상, h${myRank}=마`;
+        document.getElementById("myFormationDesc2").textContent = `b${myRank}=마, c${myRank}=상, g${myRank}=마, h${myRank}=상`;
+        document.getElementById("myFormationDesc3").textContent = `b${myRank}=마, c${myRank}=상, g${myRank}=상, h${myRank}=마 (기본값)`;
+        document.getElementById("myFormationDesc4").textContent = `b${myRank}=상, c${myRank}=마, g${myRank}=마, h${myRank}=상`;
+        
+        // 상대 상차림 설명 업데이트
+        document.getElementById("opponentFormationDesc1").textContent = `b${opponentRank}=상, c${opponentRank}=마, g${opponentRank}=상, h${opponentRank}=마`;
+        document.getElementById("opponentFormationDesc2").textContent = `b${opponentRank}=마, c${opponentRank}=상, g${opponentRank}=마, h${opponentRank}=상`;
+        document.getElementById("opponentFormationDesc3").textContent = `b${opponentRank}=마, c${opponentRank}=상, g${opponentRank}=상, h${opponentRank}=마 (기본값)`;
+        document.getElementById("opponentFormationDesc4").textContent = `b${opponentRank}=상, c${opponentRank}=마, g${opponentRank}=마, h${opponentRank}=상`;
+      }
+
+      async function applyFormation() {
+        const mySelected = document.querySelector("#myFormationSelector .formation-option.selected");
+        const opponentSelected = document.querySelector("#opponentFormationSelector .formation-option.selected");
+        
+        if (!mySelected || !opponentSelected) {
+          showToast("상차림을 모두 선택해주세요.", "warning");
+          return;
+        }
+
+        let myFormation = mySelected.dataset.formation;
+        let opponentFormation = opponentSelected.dataset.formation;
+        
+        // 사용자가 보는 관점에서 실제 보드 좌표로 변환
+        // 내가 초이고 한 진영을 보는 경우, 또는 내가 한이고 초 진영을 보는 경우 좌우 반전 필요
+        let hanFormation, choFormation;
+        
+        if (mySide === "cho") {
+          // 내가 초: 내 상차림은 초 진영, 상대 상차림은 한 진영
+          choFormation = myFormation; // 내가 보는 초 진영은 그대로
+          hanFormation = flipFormation(opponentFormation); // 내가 보는 한 진영은 좌우 반전
+        } else {
+          // 내가 한: 내 상차림은 한 진영, 상대 상차림은 초 진영
+          hanFormation = myFormation; // 내가 보는 한 진영은 그대로
+          choFormation = flipFormation(opponentFormation); // 내가 보는 초 진영은 좌우 반전
+        }
+        
+        await initGame(null, hanFormation, choFormation);
+        toggleSetupPanel();
+        const mySideLabel = mySide === "cho" ? "초" : "한";
+        const opponentSideLabel = mySide === "cho" ? "한" : "초";
+        showToast(`${mySideLabel}: ${myFormation}, ${opponentSideLabel}: ${opponentFormation} 상차림으로 게임을 시작합니다!`, "success");
+      }
+
+      // 내 진영 선택 이벤트
+      document.querySelectorAll("#mySideSelector .formation-option").forEach((option) => {
+        option.addEventListener("click", () => {
+          document.querySelectorAll("#mySideSelector .formation-option").forEach((opt) => {
+            opt.classList.remove("selected");
+          });
+          option.classList.add("selected");
+          mySide = option.dataset.side;
+          updateFormationLabels();
+        });
+      });
+
+      // 내 상차림 선택 이벤트
+      document.querySelectorAll("#myFormationSelector .formation-option").forEach((option) => {
+        option.addEventListener("click", () => {
+          document.querySelectorAll("#myFormationSelector .formation-option").forEach((opt) => {
+            opt.classList.remove("selected");
+          });
+          option.classList.add("selected");
+        });
+      });
+
+      // 상대 상차림 선택 이벤트
+      document.querySelectorAll("#opponentFormationSelector .formation-option").forEach((option) => {
+        option.addEventListener("click", () => {
+          document.querySelectorAll("#opponentFormationSelector .formation-option").forEach((opt) => {
+            opt.classList.remove("selected");
+          });
+          option.classList.add("selected");
+        });
+      });
+
+      // ============================================
+      // Board flip functionality
+      // ============================================
+
+      function flipBoard() {
+        boardFlipped = !boardFlipped;
+        // 버튼 텍스트 업데이트
+        const flipBtn = document.getElementById("flipBoardBtn");
+        flipBtn.textContent = boardFlipped ? "보드 되돌리기" : "보드 뒤집기";
+        // 보드가 뒤집히면 선택 상태와 하이라이트도 다시 그려야 함
+        startAnimationLoop();
+        render(performance.now());
+      }
+
+      // Button event listeners
+      document.getElementById("newGameBtn").addEventListener("click", () => initGame());
+      document.getElementById("aiMoveBtn").addEventListener("click", aiMove);
+      document.getElementById("autoPlayBtn").addEventListener("click", toggleAutoPlay);
+      document.getElementById("resetBtn").addEventListener("click", () => initGame());
+      document.getElementById("setupBtn").addEventListener("click", toggleSetupPanel);
+      document.getElementById("applyFormationBtn").addEventListener("click", applyFormation);
+      document.getElementById("flipBoardBtn").addEventListener("click", flipBoard);
+
+      // Initialize on load
+      updateFormationLabels();
+      updateAutoPlayButton(); // 초기 버튼 상태 설정
+      initGame();
+    </script>
+  </body>
+</html>
