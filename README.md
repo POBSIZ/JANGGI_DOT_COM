@@ -81,6 +81,18 @@ python scripts/train_nnue_gpu.py --positions 5000 --epochs 50 --skip-eval
 python scripts/train_nnue_gpu.py --parallel --positions 10000 --epochs 100
 ```
 
+### 기보 기반 학습 (권장)
+
+실제 대국 기보 파일(.gib)을 사용하여 더 현실적인 AI를 만들 수 있습니다.
+
+```bash
+# 기보 디렉토리에 .gib 파일을 넣고:
+python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30
+
+# 기존 모델 fine-tuning
+python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gpu_model.json --epochs 20
+```
+
 자세한 내용은 [학습 가이드](docs/training-guide.md)를 참조하세요.
 
 ## 프로젝트 구조
@@ -95,19 +107,28 @@ janggi/
 
 api.py                # FastAPI 백엔드
 main.py               # 서버 진입점
+
 scripts/
   ├── train_nnue.py         # CPU 학습 스크립트
   ├── train_nnue_gpu.py     # GPU 학습 스크립트
   ├── train_nnue_gibo.py    # 기보 기반 학습 스크립트
   └── example_use_model.py  # 모델 사용 예제
+
 models/               # 학습된 모델 파일들
+  ├── nnue_gpu_model.json     # GPU 기본 모델
+  ├── nnue_gibo_model.json    # 기보 학습 모델
+  └── nnue_gpu_iter_*.json    # 반복 학습 모델들
+
+gibo/                 # 기보 파일 디렉토리 (.gib)
+
 static/
   └── index.html      # 프론트엔드
+
 docs/
-  ├── rule-kr.md      # 장기 규칙 (한국어)
-  ├── rule-en.md      # 장기 규칙 (영어)
-  ├── training-guide.md  # 학습 가이드
-  └── how-to-use-models.md  # 모델 사용 가이드
+  ├── rule-kr.md           # 장기 규칙 (한국어)
+  ├── rule-en.md           # 장기 규칙 (영어)
+  ├── training-guide.md    # 학습 가이드
+  └── how-to-use-models.md # 모델 사용 가이드
 ```
 
 ## 규칙
