@@ -7,23 +7,38 @@ from janggi.engine import Engine
 from janggi.nnue import NNUE
 
 
+def get_best_model_path():
+    """사용 가능한 최적의 모델 경로를 반환"""
+    # 우선순위: 기보 모델 > 최신 반복 모델 > 기본 모델
+    model_priority = [
+        "models/nnue_gibo_model.json",     # 기보 학습 모델
+        "models/nnue_gpu_iter_5.json",     # 최신 반복 모델
+        "models/nnue_gpu_model.json",      # GPU 기본 모델
+        "models/nnue_model.json",          # CPU 모델
+    ]
+    
+    for model_path in model_priority:
+        if os.path.exists(model_path):
+            return model_path
+    
+    return None
+
+
 def example_1_use_model_with_engine():
     """예제 1: Engine 클래스에서 모델 사용"""
     print("=" * 60)
     print("예제 1: Engine 클래스에서 모델 사용")
     print("=" * 60)
     
-    # 모델 경로 설정
-    model_path = "models/nnue_gpu_iter_5.json"
+    # 모델 경로 설정 (자동 선택)
+    model_path = get_best_model_path()
     
-    if not os.path.exists(model_path):
-        print(f"⚠️  모델 파일을 찾을 수 없습니다: {model_path}")
-        print("사용 가능한 모델:")
-        models_dir = "models"
-        if os.path.exists(models_dir):
-            for f in os.listdir(models_dir):
-                if f.endswith(".json"):
-                    print(f"  - {os.path.join(models_dir, f)}")
+    if not model_path:
+        print("⚠️  사용 가능한 모델이 없습니다.")
+        print("먼저 학습을 실행하세요:")
+        print("  python scripts/train_nnue_gpu.py --positions 5000 --epochs 30")
+        print("  또는")
+        print("  python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30")
         return
     
     # 모델을 사용하는 엔진 생성
@@ -62,10 +77,10 @@ def example_2_use_nnue_directly():
     print("예제 2: NNUE 클래스를 직접 사용하여 위치 평가")
     print("=" * 60)
     
-    model_path = "models/nnue_gpu_iter_5.json"
+    model_path = get_best_model_path()
     
-    if not os.path.exists(model_path):
-        print(f"⚠️  모델 파일을 찾을 수 없습니다: {model_path}")
+    if not model_path:
+        print("⚠️  사용 가능한 모델이 없습니다.")
         return
     
     # 모델 로드
@@ -137,11 +152,13 @@ def example_4_play_game():
     print("예제 4: AI가 자동으로 게임 진행 (간단 버전)")
     print("=" * 60)
     
-    model_path = "models/nnue_gpu_iter_5.json"
+    model_path = get_best_model_path()
     
-    if not os.path.exists(model_path):
-        print(f"⚠️  모델 파일을 찾을 수 없습니다: {model_path}")
+    if not model_path:
+        print("⚠️  사용 가능한 모델이 없습니다.")
         return
+    
+    print(f"사용 모델: {model_path}")
     
     engine = Engine(
         depth=3,

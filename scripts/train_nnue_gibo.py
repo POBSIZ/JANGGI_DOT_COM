@@ -203,9 +203,16 @@ class GibParser:
         return game
     
     def _extract_raw_moves(self, moves_text: str) -> List[Tuple[str, Optional[str], str]]:
-        """Extract raw move data: (from_coord, piece_char, to_coord)"""
+        """Extract raw move data: (from_coord, piece_char, to_coord)
+        
+        Supports two gibo formats:
+        1. Without side prefix: 79卒78 (숫자-기물-숫자)
+        2. With side prefix: 41漢兵42 (숫자-진영-기물-숫자)
+           - 漢 (Han) or 楚 (Cho) indicates which side's piece
+        """
         moves = []
-        move_pattern = r'(\d{2})([卒兵馬象士將車包])?(\d{2})'
+        # Pattern supports optional side indicator (漢/楚) before piece type
+        move_pattern = r'(\d{2})(?:[漢楚])?([卒兵馬象士將車包])?(\d{2})'
         
         for match in re.finditer(move_pattern, moves_text):
             from_pos = match.group(1)
