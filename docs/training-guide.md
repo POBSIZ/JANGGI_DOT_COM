@@ -194,7 +194,9 @@ uv run python scripts/smart_train.py
 | 📘 standard| ~15분     | 일반적인 사용         | `--time standard`                  |
 | 📗 deep    | ~30분     | 권장, 좋은 성능       | `--time deep`                      |
 | 📕 intensive| ~1시간   | 높은 성능 목표        | `--time intensive`                 |
-| 🏆 full    | ~2시간+   | 최고 성능             | `--time full`                      |
+| 🏆 full    | ~3시간    | 최고 성능, 강화된 설정| `--time full`                      |
+| 🔥 extreme | ~4시간    | 최강 성능             | `--time extreme`                   |
+| 🏃 marathon| ~8시간    | 최종 보스, 하루 종일  | `--time marathon`                  |
 
 ### 명령줄 사용 예시
 
@@ -204,6 +206,15 @@ uv run python scripts/smart_train.py --time standard
 
 # 깊은 학습 (약 30분)
 uv run python scripts/smart_train.py --time deep
+
+# 완전 학습 (약 3시간, 강화된 설정)
+uv run python scripts/smart_train.py --time full
+
+# 극한 학습 (약 4시간, 최강 성능)
+uv run python scripts/smart_train.py --time extreme
+
+# 마라톤 학습 (약 8시간, 최종 보스)
+uv run python scripts/smart_train.py --time marathon
 
 # 기보 파일 없이 학습
 uv run python scripts/smart_train.py --time standard --no-gibo

@@ -13,7 +13,9 @@ Usage:
     python smart_train.py --time standard    # ~15분  
     python smart_train.py --time deep        # ~30분
     python smart_train.py --time intensive   # ~1시간
-    python smart_train.py --time full        # ~2시간+
+    python smart_train.py --time full        # ~3시간 (강화된 설정)
+    python smart_train.py --time extreme     # ~4시간 (최강 성능)
+    python smart_train.py --time marathon    # ~8시간 (최종 보스)
     
     # 기존 모델에서 계속 학습
     python smart_train.py --load models/nnue_model.json --time standard
@@ -40,6 +42,8 @@ class TrainingTime(Enum):
     DEEP = "deep"             # ~30분
     INTENSIVE = "intensive"   # ~1시간
     FULL = "full"             # ~2시간+
+    EXTREME = "extreme"       # ~4시간+
+    MARATHON = "marathon"     # ~8시간+
 
 
 @dataclass
@@ -253,13 +257,31 @@ def get_training_config(info: SystemInfo, training_time: TrainingTime, use_gibo:
             "estimated_min": 60
         },
         TrainingTime.FULL: {
-            "positions": 50000,
-            "epochs": 100,
+            "positions": 150000,  # 3배 증가
+            "epochs": 200,        # 2배 증가
             "batch_size": 512,
             "lr": 0.0002,
-            "depth": 4,
-            "iterations": 8,
-            "estimated_min": 120
+            "depth": 5,           # 깊이 증가
+            "iterations": 15,      # 반복 증가
+            "estimated_min": 180  # 3시간
+        },
+        TrainingTime.EXTREME: {
+            "positions": 300000,  # 6배 증가
+            "epochs": 300,        # 3배 증가
+            "batch_size": 512,
+            "lr": 0.00015,
+            "depth": 6,           # 더 깊은 탐색
+            "iterations": 20,      # 더 많은 반복
+            "estimated_min": 240  # 4시간
+        },
+        TrainingTime.MARATHON: {
+            "positions": 500000,  # 10배 증가
+            "epochs": 500,        # 5배 증가
+            "batch_size": 512,
+            "lr": 0.0001,
+            "depth": 7,           # 매우 깊은 탐색
+            "iterations": 30,     # 매우 많은 반복
+            "estimated_min": 480  # 8시간
         }
     }
     
@@ -271,12 +293,23 @@ def get_training_config(info: SystemInfo, training_time: TrainingTime, use_gibo:
         # GPU 메모리에 따라 배치 사이즈 조정
         if info.gpu_memory_gb >= 8:
             config["batch_size"] = min(config["batch_size"] * 2, 1024)
-            config["positions"] = int(config["positions"] * 1.5)
+            # FULL 이상 모드에서는 포지션 수를 더 많이 증가
+            if training_time in [TrainingTime.FULL, TrainingTime.EXTREME, TrainingTime.MARATHON]:
+                config["positions"] = int(config["positions"] * 2.0)  # 2배 증가
+            else:
+                config["positions"] = int(config["positions"] * 1.5)
         elif info.gpu_memory_gb >= 4:
             config["batch_size"] = min(config["batch_size"] * 1.5, 512)
+            if training_time in [TrainingTime.FULL, TrainingTime.EXTREME, TrainingTime.MARATHON]:
+                config["positions"] = int(config["positions"] * 1.5)
         
-        # GPU 학습은 더 빠르므로 시간 예상 조정
-        config["estimated_min"] = int(config["estimated_min"] * 0.5)
+        # FULL 이상 모드에서는 GPU가 있어도 충분한 학습 시간 보장
+        if training_time in [TrainingTime.FULL, TrainingTime.EXTREME, TrainingTime.MARATHON]:
+            # GPU가 있어도 예상 시간을 크게 줄이지 않음 (최대 30%만 감소)
+            config["estimated_min"] = int(config["estimated_min"] * 0.7)
+        else:
+            # 기존 모드는 빠르게 처리
+            config["estimated_min"] = int(config["estimated_min"] * 0.5)
     else:
         method = "cpu"
         # CPU 코어에 따라 병렬화 설정
@@ -359,7 +392,9 @@ def interactive_menu(info: SystemInfo) -> Tuple[TrainingTime, bool, Optional[str
         (TrainingTime.STANDARD, "📘 표준 학습", "~15분", "일반적인 사용에 적합"),
         (TrainingTime.DEEP, "📗 깊은 학습", "~30분", "더 나은 성능, 권장"),
         (TrainingTime.INTENSIVE, "📕 집중 학습", "~1시간", "높은 성능 목표"),
-        (TrainingTime.FULL, "🏆 완전 학습", "~2시간+", "최고 성능, 시간 여유 있을 때"),
+        (TrainingTime.FULL, "🏆 완전 학습", "~3시간", "최고 성능, 강화된 설정"),
+        (TrainingTime.EXTREME, "🔥 극한 학습", "~4시간", "최강 성능, 매우 긴 학습"),
+        (TrainingTime.MARATHON, "🏃 마라톤 학습", "~8시간", "최종 보스, 하루 종일 학습"),
     ]
     
     print("\n학습 시간을 선택하세요:\n")
@@ -371,7 +406,7 @@ def interactive_menu(info: SystemInfo) -> Tuple[TrainingTime, bool, Optional[str
     
     while True:
         try:
-            choice = input("\n선택 (1-5, 0=종료): ").strip()
+            choice = input("\n선택 (1-7, 0=종료): ").strip()
             if choice == "0":
                 return None, False, None
             
@@ -379,7 +414,7 @@ def interactive_menu(info: SystemInfo) -> Tuple[TrainingTime, bool, Optional[str
             if 0 <= idx < len(options):
                 selected_time = options[idx][0]
                 break
-            print("❌ 1-5 사이의 숫자를 입력하세요.")
+            print(f"❌ 1-{len(options)} 사이의 숫자를 입력하세요.")
         except ValueError:
             print("❌ 숫자를 입력하세요.")
     
@@ -471,40 +506,66 @@ def train_with_gpu(config: TrainingConfig, load_model: Optional[str] = None, gib
                 learning_rate=config.learning_rate
             )
     
-    # Self-play 데이터 생성 및 학습
-    from scripts.train_nnue_gpu import DataGenerator
-    
-    generator = DataGenerator()
-    
-    def progress(done, total, speed, eta):
-        print(f"\r📊 포지션 생성: {done:,}/{total:,} ({speed:.1f}/s, ETA: {eta:.0f}s)", end="", flush=True)
-    
-    print(f"\n🎲 Self-play 포지션 생성 중 ({config.positions:,}개)...")
-    
-    if config.use_parallel:
-        features, targets = generator.generate_positions_parallel(
-            num_positions=config.positions,
-            num_workers=config.num_workers,
-            progress_callback=progress
+    # 반복 학습 사용 여부 결정
+    if config.iterations > 1:
+        # 반복 학습 모드
+        from scripts.train_nnue_gpu import train_iterative
+        
+        print(f"\n🔄 반복 학습 모드 ({config.iterations}회 반복)")
+        # 게임당 약 50-100개 포지션이 생성되므로, 게임 수 계산
+        positions_per_iteration = config.positions // config.iterations
+        games_per_iteration = max(50, positions_per_iteration // 80)  # 게임당 평균 80개 포지션 가정
+        epochs_per_iteration = max(10, config.epochs // config.iterations)
+        
+        print(f"   각 반복마다: ~{games_per_iteration}게임 (~{positions_per_iteration:,}개 포지션), {epochs_per_iteration}회 에포크")
+        
+        # 반복 학습 실행
+        train_iterative(
+            nnue,
+            num_iterations=config.iterations,
+            games_per_iteration=games_per_iteration,
+            epochs_per_iteration=epochs_per_iteration,
+            batch_size=config.batch_size,
+            output_dir="models",
+            search_depth=config.search_depth
         )
+        
+        history = {"train_loss": [], "val_loss": []}  # 반복 학습은 별도 출력
     else:
-        features, targets = generator.generate_positions_fast(
-            num_positions=config.positions,
-            progress_callback=progress
+        # 단일 학습 모드
+        from scripts.train_nnue_gpu import DataGenerator
+        
+        generator = DataGenerator()
+        
+        def progress(done, total, speed, eta):
+            print(f"\r📊 포지션 생성: {done:,}/{total:,} ({speed:.1f}/s, ETA: {eta:.0f}s)", end="", flush=True)
+        
+        print(f"\n🎲 Self-play 포지션 생성 중 ({config.positions:,}개)...")
+        
+        if config.use_parallel:
+            features, targets = generator.generate_positions_parallel(
+                num_positions=config.positions,
+                num_workers=config.num_workers,
+                progress_callback=progress
+            )
+        else:
+            features, targets = generator.generate_positions_fast(
+                num_positions=config.positions,
+                progress_callback=progress
+            )
+        
+        print()  # 줄바꿈
+        
+        print(f"\n🎓 학습 시작 ({len(features):,}개 포지션, {config.epochs}회 에포크)...")
+        trainer = GPUTrainer(nnue)
+        
+        history = trainer.train(
+            features, targets,
+            epochs=config.epochs,
+            batch_size=config.batch_size,
+            learning_rate=config.learning_rate,
+            early_stopping_patience=10
         )
-    
-    print()  # 줄바꿈
-    
-    print(f"\n🎓 학습 시작 ({len(features):,}개 포지션, {config.epochs}회 에포크)...")
-    trainer = GPUTrainer(nnue)
-    
-    history = trainer.train(
-        features, targets,
-        epochs=config.epochs,
-        batch_size=config.batch_size,
-        learning_rate=config.learning_rate,
-        early_stopping_patience=10
-    )
     
     # 모델 저장
     output_path = "models/nnue_smart_model.json"
@@ -617,7 +678,9 @@ def main():
   standard   📘 표준 학습 (~15분)   - 일반적인 사용
   deep       📗 깊은 학습 (~30분)   - 권장
   intensive  📕 집중 학습 (~1시간)  - 높은 성능
-  full       🏆 완전 학습 (~2시간+) - 최고 성능
+  full       🏆 완전 학습 (~3시간)  - 최고 성능, 강화된 설정
+  extreme    🔥 극한 학습 (~4시간)  - 최강 성능
+  marathon   🏃 마라톤 학습 (~8시간) - 최종 보스
 
 예시:
   python smart_train.py                      # 대화형 모드
@@ -627,7 +690,7 @@ def main():
     )
     
     parser.add_argument('--time', type=str, 
-                        choices=['quick', 'standard', 'deep', 'intensive', 'full'],
+                        choices=['quick', 'standard', 'deep', 'intensive', 'full', 'extreme', 'marathon'],
                         default=None,
                         help='학습 시간 선택')
     parser.add_argument('--load', type=str, default=None,

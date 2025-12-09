@@ -107,6 +107,9 @@ uv run python scripts/smart_train.py
 # 또는 직접 시간 지정
 uv run python scripts/smart_train.py --time deep  # ~30분
 uv run python scripts/smart_train.py --time standard  # ~15분
+uv run python scripts/smart_train.py --time full  # ~3시간 (강화된 설정)
+uv run python scripts/smart_train.py --time extreme  # ~4시간 (최강 성능)
+uv run python scripts/smart_train.py --time marathon  # ~8시간 (최종 보스)
 ```
 
 스마트 학습은 다음을 자동으로 처리합니다:

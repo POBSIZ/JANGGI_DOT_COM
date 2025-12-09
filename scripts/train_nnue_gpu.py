@@ -480,7 +480,8 @@ def train_iterative(
     games_per_iteration: int = 100,
     epochs_per_iteration: int = 20,
     batch_size: int = 256,
-    output_dir: str = "models"
+    output_dir: str = "models",
+    search_depth: int = 2
 ):
     """Iterative self-improvement training."""
     os.makedirs(output_dir, exist_ok=True)
@@ -498,6 +499,7 @@ def train_iterative(
         features, targets = generator.generate_selfplay_data(
             nnue,
             num_games=games_per_iteration,
+            search_depth=search_depth,
             progress_callback=lambda g, t, p: print(f"Game {g}/{t}, Positions: {p}")
         )
         
