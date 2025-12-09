@@ -56,6 +56,7 @@ class SystemInfo:
     gpu_memory_gb: float
     has_gibo_files: bool
     gibo_file_count: int
+    gpu_error_message: Optional[str] = None
 
 
 @dataclass
@@ -125,9 +126,11 @@ def get_system_info(gibo_dir: str = "gibo") -> SystemInfo:
     gpu_type = "none"
     gpu_name = "None"
     gpu_memory_gb = 0.0
+    gpu_error_message = None
     
     try:
         import torch
+        # PyTorch가 성공적으로 import되었는지 확인
         if torch.cuda.is_available():
             gpu_available = True
             gpu_type = "cuda"
@@ -144,8 +147,21 @@ def get_system_info(gibo_dir: str = "gibo") -> SystemInfo:
                 gpu_memory_gb = psutil.virtual_memory().total / (1024 ** 3) * 0.5
             except:
                 gpu_memory_gb = 8.0  # Default estimate
-    except ImportError:
-        pass
+        else:
+            # PyTorch는 설치되어 있지만 CUDA/MPS를 사용할 수 없음
+            torch_version = torch.__version__
+            if "+cpu" in torch_version:
+                gpu_error_message = f"PyTorch CPU-only 버전이 설치되어 있습니다 ({torch_version}). GPU를 사용하려면 CUDA 지원 버전을 설치하세요:\n  uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
+            else:
+                gpu_error_message = "PyTorch는 설치되어 있지만 CUDA를 사용할 수 없습니다. CUDA 드라이버가 설치되어 있는지 확인하세요."
+    except (ImportError, AttributeError, RuntimeError) as e:
+        # PyTorch import 실패 또는 내부 오류 (예: AcceleratorError 등)
+        error_type = type(e).__name__
+        if isinstance(e, ImportError):
+            gpu_error_message = "PyTorch가 설치되어 있지 않습니다. GPU를 사용하려면 PyTorch를 설치하세요:\n  uv sync --extra gpu\n또는 CUDA 지원 버전:\n  uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
+        else:
+            # PyTorch 설치가 손상되었거나 호환성 문제
+            gpu_error_message = f"PyTorch 설치에 문제가 있습니다 ({error_type}: {str(e)}).\n  PyTorch를 재설치하세요:\n  uv pip install --force-reinstall torch\n  또는 CUDA 지원 버전:\n  uv pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
     
     # 기보 파일 확인
     gibo_files = glob.glob(os.path.join(gibo_dir, "*.gib")) + glob.glob(os.path.join(gibo_dir, "*.GIB"))
@@ -163,7 +179,8 @@ def get_system_info(gibo_dir: str = "gibo") -> SystemInfo:
         gpu_name=gpu_name,
         gpu_memory_gb=gpu_memory_gb,
         has_gibo_files=has_gibo_files,
-        gibo_file_count=gibo_file_count
+        gibo_file_count=gibo_file_count,
+        gpu_error_message=gpu_error_message
     )
 
 
@@ -184,6 +201,8 @@ def print_system_info(info: SystemInfo):
         print("   ✅ GPU 가속 사용 가능")
     else:
         print("📌 GPU: 사용 불가 (CPU 학습 모드)")
+        if info.gpu_error_message:
+            print(f"   ⚠️  {info.gpu_error_message}")
     
     if info.has_gibo_files:
         print(f"📌 기보 파일: {info.gibo_file_count}개 발견")
@@ -421,11 +440,27 @@ def train_with_gpu(config: TrainingConfig, load_model: Optional[str] = None, gib
             print(f"✅ {len(games)}개 게임 로드 완료")
             
             generator = GiboDataGenerator()
-            features, targets = generator.generate_from_games(
-                games,
-                positions_per_game=50,
-                progress_callback=lambda d, t: print(f"\r처리 중: {d}/{t}", end="", flush=True)
-            )
+            
+            # 병렬 처리 사용 (CPU 코어가 4개 이상이고 게임이 많으면 자동으로 병렬 처리)
+            import multiprocessing as mp
+            cpu_count = mp.cpu_count()
+            use_parallel = config.use_parallel and len(games) > 100
+            
+            if use_parallel:
+                print(f"🚀 병렬 처리 모드 사용 ({config.num_workers}개 워커)")
+                features, targets = generator.generate_from_games_parallel(
+                    games,
+                    positions_per_game=50,
+                    num_workers=config.num_workers,
+                    progress_callback=lambda d, t: print(f"\r처리 중: {d}/{t}", end="", flush=True)
+                )
+            else:
+                print("🔄 순차 처리 모드 사용")
+                features, targets = generator.generate_from_games(
+                    games,
+                    positions_per_game=50,
+                    progress_callback=lambda d, t: print(f"\r처리 중: {d}/{t}", end="", flush=True)
+                )
             print()
             
             print(f"\n🎓 기보 기반 학습 시작 ({len(features)}개 포지션)...")

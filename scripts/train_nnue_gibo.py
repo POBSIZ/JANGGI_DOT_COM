@@ -16,6 +16,9 @@ import argparse
 import os
 import re
 import glob
+import multiprocessing as mp
+import time
+import random
 from typing import List, Optional, Tuple, Dict
 import numpy as np
 
@@ -241,6 +244,161 @@ class GibParser:
         return all_games
 
 
+# ============================================================================
+# 모듈 레벨 Worker 함수 (multiprocessing을 위해 필요)
+# ============================================================================
+
+def _process_single_game_worker(args: Tuple[Dict, int, int]) -> Tuple[List[np.ndarray], List[float], bool, Optional[str]]:
+    """
+    단일 게임을 처리하는 worker 함수 (모듈 레벨에 있어야 pickle 가능)
+    
+    Args:
+        args: (game_dict, max_positions, feature_size) 튜플
+        
+    Returns:
+        (features_list, targets_list, success, error_message)
+    """
+    game, max_positions, feature_size = args
+    
+    # 각 프로세스가 독립적으로 FeatureExtractor 생성 (공유 상태 문제 해결)
+    if not TORCH_AVAILABLE:
+        return [], [], False, "PyTorch not available"
+    
+    feature_extractor = FeatureExtractor(feature_size)
+    features = []
+    targets = []
+    
+    try:
+        # 게임 데이터 추출
+        cho_formation = game.get('cho_formation', '마상상마')
+        han_formation = game.get('han_formation', '마상상마')
+        result = game.get('result', None)
+        raw_moves = game.get('raw_moves', [])
+        
+        if len(raw_moves) < 5:
+            return features, targets, True, None
+        
+        # 보드 초기화
+        try:
+            board = Board(
+                cho_formation=cho_formation,
+                han_formation=han_formation
+            )
+        except Exception:
+            board = Board()
+        
+        # 타겟 값 계산
+        if result == 'cho':
+            cho_target = 1.0
+            han_target = -1.0
+        elif result == 'han':
+            cho_target = -1.0
+            han_target = 1.0
+        else:
+            cho_target = 0.0
+            han_target = 0.0
+        
+        # 게임 재현 및 포지션 추출
+        positions_collected = 0
+        failed_moves = 0
+        total_moves = len(raw_moves)
+        
+        for move_idx, (from_coord, piece_char, to_coord) in enumerate(raw_moves):
+            if positions_collected >= max_positions:
+                break
+            
+            if failed_moves > 5 and failed_moves > positions_collected:
+                break
+            
+            # Feature 추출
+            try:
+                feat = feature_extractor.extract(board)
+                
+                if not np.isnan(feat).any():
+                    progress = move_idx / max(total_moves - 1, 1)
+                    
+                    if board.side_to_move == Side.CHO:
+                        base_target = cho_target
+                    else:
+                        base_target = han_target
+                    
+                    target = base_target * (0.3 + 0.7 * progress)
+                    
+                    features.append(feat)
+                    targets.append(target)
+                    positions_collected += 1
+                    
+            except Exception:
+                pass
+            
+            # 수 찾기 및 실행
+            move = _find_valid_move_helper(board, from_coord, to_coord, piece_char)
+            
+            if move:
+                if not board.make_move(move):
+                    failed_moves += 1
+            else:
+                failed_moves += 1
+                legal_moves = board.generate_moves()
+                if legal_moves:
+                    random_move = random.choice(legal_moves)
+                    board.make_move(random_move)
+                else:
+                    break
+        
+        return features, targets, True, None
+        
+    except Exception as e:
+        # 예외 정보를 반환값에 포함 (디버깅 용이)
+        return [], [], False, str(e)
+
+
+def _find_valid_move_helper(board: Board, from_coord: str, to_coord: str, 
+                            piece_char: Optional[str]) -> Optional[Move]:
+    """좌표 변환 헬퍼 함수 (worker 함수 내부에서 사용)"""
+    gibo_col1, gibo_row1 = int(from_coord[0]), int(from_coord[1])
+    gibo_col2, gibo_row2 = int(to_coord[0]), int(to_coord[1])
+    
+    transformations = [
+        lambda c, r: (9 - c if c > 0 else 8, {0:7,1:6,2:5,3:4,4:3,5:2,6:1,7:0,8:9,9:8}.get(r, r)),
+        lambda c, r: (8 - c, 9 - r),
+        lambda c, r: (c, r),
+        lambda c, r: (8 - c, r),
+        lambda c, r: (9 - c, 9 - r),
+    ]
+    
+    for transform in transformations:
+        try:
+            file1, rank1 = transform(gibo_col1, gibo_row1)
+            file2, rank2 = transform(gibo_col2, gibo_row2)
+            
+            if not (0 <= file1 < 9 and 0 <= rank1 < 10):
+                continue
+            if not (0 <= file2 < 9 and 0 <= rank2 < 10):
+                continue
+            
+            piece = board.get_piece(file1, rank1)
+            if piece is None:
+                continue
+            
+            if piece.side != board.side_to_move:
+                continue
+            
+            if piece_char:
+                expected_type = GibParser.HANJA_TO_PIECE.get(piece_char)
+                if expected_type and piece.piece_type != expected_type:
+                    continue
+            
+            move = Move(file1, rank1, file2, rank2)
+            if board.is_legal_move(move):
+                return move
+                
+        except (ValueError, KeyError, IndexError):
+            continue
+    
+    return None
+
+
 class GiboDataGenerator:
     """Generate training data from parsed game records."""
     
@@ -301,6 +459,94 @@ class GiboDataGenerator:
             raise ValueError("No positions generated from games")
         
         return np.array(features_list, dtype=np.float32), np.array(targets_list, dtype=np.float32)
+    
+    def generate_from_games_parallel(
+        self,
+        games: List[Dict],
+        positions_per_game: int = 50,
+        num_workers: Optional[int] = None,
+        progress_callback=None
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        병렬 처리로 게임 데이터 생성 (안전한 버전)
+        
+        해결된 문제들:
+        1. ✅ 인스턴스 변수 공유 문제: worker 함수에서 독립적으로 생성
+        2. ✅ 공유 상태 카운터: 각 프로세스가 독립적으로 처리 후 합산
+        3. ✅ 출력 충돌: 메인 프로세스에서만 진행 상황 출력
+        4. ✅ 예외 처리: 예외 정보를 반환값에 포함
+        5. ✅ 메모리 효율: 배치 단위로 처리
+        """
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch is required")
+        
+        if num_workers is None:
+            num_workers = max(1, mp.cpu_count() - 1)
+        
+        feature_size = self.feature_extractor.feature_size if self.feature_extractor else 512
+        
+        print(f"🚀 병렬 처리 시작: {len(games)}개 게임, {num_workers}개 워커")
+        start_time = time.time()
+        
+        # Worker 함수에 전달할 인자 준비 (pickle 가능한 형태)
+        args_list = [
+            (game, positions_per_game, feature_size)
+            for game in games
+        ]
+        
+        # 결과 수집용 리스트 (메인 프로세스에서만 접근)
+        all_features = []
+        all_targets = []
+        successful_games = 0
+        failed_games = 0
+        error_messages = []
+        
+        # 멀티프로세싱 풀 사용
+        with mp.Pool(num_workers) as pool:
+            # imap_unordered: 결과를 받는 대로 처리 (순서 보장 안 함, 더 빠름)
+            # chunksize: 배치 크기 (너무 작으면 오버헤드, 너무 크면 불균형)
+            chunksize = max(1, len(games) // (num_workers * 4))
+            results = pool.imap_unordered(
+                _process_single_game_worker, 
+                args_list, 
+                chunksize=chunksize
+            )
+            
+            processed_count = 0
+            for result in results:
+                features, targets, success, error_msg = result
+                
+                if success and len(features) > 0:
+                    all_features.extend(features)
+                    all_targets.extend(targets)
+                    successful_games += 1
+                else:
+                    failed_games += 1
+                    if error_msg and len(error_messages) < 10:
+                        error_messages.append(error_msg)
+                
+                processed_count += 1
+                
+                # 진행 상황 콜백 (메인 프로세스에서만 호출 - 출력 충돌 방지)
+                if progress_callback and processed_count % 50 == 0:
+                    progress_callback(processed_count, len(games))
+        
+        # 최종 결과 출력
+        elapsed = time.time() - start_time
+        print(f"\n✅ 처리 완료: {successful_games}개 성공, {failed_games}개 실패")
+        print(f"📊 생성된 포지션: {len(all_features)}개")
+        if elapsed > 0:
+            print(f"⏱️  소요 시간: {elapsed:.1f}초 ({len(all_features)/elapsed:.1f} 포지션/초)")
+        
+        if error_messages:
+            print(f"\n⚠️  오류 예시 (최대 10개):")
+            for msg in error_messages[:10]:
+                print(f"  - {msg}")
+        
+        if len(all_features) == 0:
+            raise ValueError("생성된 포지션이 없습니다")
+        
+        return np.array(all_features, dtype=np.float32), np.array(all_targets, dtype=np.float32)
     
     def _find_valid_move(self, board: Board, from_coord: str, to_coord: str, 
                           piece_char: Optional[str], move_num: int) -> Optional[Move]:
