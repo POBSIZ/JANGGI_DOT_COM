@@ -284,53 +284,7 @@ async def cleanup_old_games():
 
 ## 6. 새로운 기능
 
-### 6.1 멀티플레이어 지원 ✅ 구현됨
-
-**WebSocket 기반 실시간 멀티플레이어가 구현되었습니다!**
-
-구현 내용:
-- `janggi/multiplayer.py`: 방 관리, 플레이어 관리, 게임 상태 동기화
-- `static/multiplayer.html`: 멀티플레이어 전용 UI
-- `api.py`: WebSocket 엔드포인트 (`/ws/multiplayer/{player_id}`)
-
-기능:
-- 방 생성/입장/나가기
-- 실시간 수 동기화
-- 채팅 기능
-- 무승부 제안/기권
-- 시간 제한 옵션
-
-```python
-from janggi import get_connection_manager
-
-# WebSocket 연결 관리
-manager = get_connection_manager()
-
-# 방 목록 조회
-rooms = manager.room_manager.get_available_rooms()
-
-# 클라이언트에서 WebSocket 연결
-# ws://host/ws/multiplayer/{player_id}
-```
-
-```javascript
-// 프론트엔드에서 사용
-const ws = new WebSocket(`ws://${host}/ws/multiplayer/${playerId}`);
-
-ws.send(JSON.stringify({
-  type: 'create_room',
-  nickname: '플레이어1',
-  time_limit: 600  // 10분
-}));
-
-ws.send(JSON.stringify({
-  type: 'make_move',
-  from_square: 'e2',
-  to_square: 'e4'
-}));
-```
-
-### 6.2 AI 난이도 시스템
+### 6.1 AI 난이도 시스템
 
 ```python
 class Difficulty(Enum):
@@ -340,7 +294,7 @@ class Difficulty(Enum):
     EXPERT = {"depth": 4, "random_factor": 0}
 ```
 
-### 6.3 분석 모드
+### 6.2 분석 모드
 
 ```python
 @app.post("/api/analyze/{game_id}")
@@ -386,7 +340,6 @@ class GiboParser:
 | ✅ 완료 | 오프닝 북 | AI 강화 | 하 | **구현됨** (57게임, 944포지션) |
 | ✅ 완료 | 모바일 반응형 | 사용성 향상 | 하 | **구현됨** |
 | ✅ 완료 | 수 되돌리기 | 사용성 향상 | 하 | **구현됨** (50수까지) |
-| ✅ 완료 | WebSocket 멀티플레이 | 기능 확장 | 상 | **구현됨** (방 생성/채팅/시간제한) |
 | ✅ 완료 | Bitboard | 성능 대폭 향상 | 상 | **엔진 통합** (90비트, 공격테이블) |
 
 ---

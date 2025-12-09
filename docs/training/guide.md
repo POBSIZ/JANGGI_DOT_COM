@@ -232,6 +232,13 @@ uv run python scripts/smart_train.py --info-only
 
 - **GPU 감지**: CUDA 또는 Apple Silicon (MPS) GPU가 있으면 자동으로 GPU 학습
   - GPU가 감지되지 않으면 자동으로 원인 진단 및 해결 방법 제시
+- **GPU 배치 크기 자동 최적화**: GPU 메모리에 따라 평가 배치 크기 자동 계산
+  - 16GB+ GPU: 1024
+  - 8GB GPU: 768
+  - 4GB GPU: 512
+  - 그 외: 256
+- **병렬 self-play + GPU 배치 평가**: CPU 멀티코어로 게임 생성, GPU 배치로 평가
+- **중앙 집중식 GPU 평가**: 워커에서 모델을 로드하지 않고 메인 프로세스에서 배치 평가
 - **메모리 최적화**: RAM/VRAM 크기에 따라 배치 크기 자동 조절
 - **병렬 처리**: CPU 코어 수에 따라 데이터 생성 병렬화
 - **기보 활용**: 기보 파일이 있으면 자동으로 기보 기반 학습 포함
@@ -390,11 +397,24 @@ uv run python scripts/train_nnue_gibo.py \
 
 ### 4. 반복 학습 (Iterative Training)
 
-모델이 자기 자신과 대전하면서 점진적으로 개선됩니다.
+모델이 자기 자신과 대전하면서 점진적으로 개선됩니다. GPU 배치 평가 최적화가 자동으로 적용됩니다.
 
 ```bash
+# 기본 반복 학습
+uv run python scripts/train_nnue_gpu.py --method iterative --iterations 10 --games-per-iter 100
+
+# GPU 배치 크기 자동 계산 (권장)
+uv run python scripts/train_nnue_gpu.py --method iterative --iterations 10 --games-per-iter 100 --eval-batch-size 512
+
+# 또는 배치 크기 생략하여 자동 계산
 uv run python scripts/train_nnue_gpu.py --method iterative --iterations 10 --games-per-iter 100
 ```
+
+**GPU 최적화 기능**:
+- ✅ 병렬 self-play: CPU 멀티코어로 여러 게임 병렬 생성
+- ✅ GPU 배치 평가: 포지션들을 모아서 큰 배치로 평가 (GPU 활용도 향상)
+- ✅ 중앙 집중식 평가: 워커에서 모델을 로드하지 않고 메인 프로세스에서 배치 평가
+- ✅ 자동 배치 크기: GPU 메모리에 따라 최적 배치 크기 자동 계산
 
 ---
 
