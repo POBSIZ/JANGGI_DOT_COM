@@ -2,22 +2,24 @@
 name = "janggi-ai"
 version = "0.1.0"
 description = "Korean Janggi AI engine based on NNUE architecture"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "websockets>=12.0",
-    "numpy>=1.24.0",
-    "pydantic>=2.0.0",
+    "fastapi>=0.124.0",
+    "uvicorn[standard]>=0.38.0",
+    "websockets>=15.0",
+    "numpy>=2.0.0",
+    "pydantic>=2.12.0",
 ]
 
 [project.optional-dependencies]
 gpu = [
-    "torch>=2.0.0",
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "torchaudio>=2.5.0",
 ]
 dev = [
-    "torch>=2.0.0",
-    "pytest>=7.0.0",
+    "torch>=2.5.0",
+    "pytest>=9.0.0",
 ]
 
 [build-system]
