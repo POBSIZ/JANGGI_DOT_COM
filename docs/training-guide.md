@@ -7,10 +7,15 @@
 1. [개요](#개요)
 2. [환경 설정](#환경-설정)
 3. [빠른 시작](#빠른-시작)
-4. [학습 방법](#학습-방법)
-5. [최적화 옵션](#최적화-옵션)
-6. [문제 해결](#문제-해결)
-7. [고급 사용법](#고급-사용법)
+4. [🆕 스마트 학습 (권장)](#스마트-학습-권장)
+5. [학습 방법](#학습-방법)
+   - [GPU 학습](#1-gpu-학습-권장)
+   - [CPU 학습](#2-cpu-학습)
+   - [기보 학습](#3-기보-학습-신규)
+   - [반복 학습](#4-반복-학습-iterative-training)
+6. [최적화 옵션](#최적화-옵션)
+7. [문제 해결](#문제-해결)
+8. [고급 사용법](#고급-사용법)
 
 ---
 
@@ -96,6 +101,92 @@ ls -la models/nnue_gpu_model.json
 
 ---
 
+## 스마트 학습 (권장)
+
+🆕 **가장 쉬운 학습 방법!** 컴퓨터 환경을 자동으로 분석하고 최적의 설정을 찾아줍니다.
+
+### 대화형 모드 (추천)
+
+```bash
+python scripts/smart_train.py
+```
+
+실행하면 다음 순서로 진행됩니다:
+1. 🔍 시스템 환경 자동 분석 (CPU, RAM, GPU, 기보 파일)
+2. 🎯 학습 시간 선택 메뉴
+3. 📊 최적 설정 자동 계산
+4. 🎓 학습 시작
+
+### 학습 시간 옵션
+
+| 옵션       | 예상 시간 | 설명                  | 명령어 예시                        |
+| ---------- | --------- | --------------------- | ---------------------------------- |
+| ⚡ quick   | ~5분      | 빠른 테스트용         | `--time quick`                     |
+| 📘 standard| ~15분     | 일반적인 사용         | `--time standard`                  |
+| 📗 deep    | ~30분     | 권장, 좋은 성능       | `--time deep`                      |
+| 📕 intensive| ~1시간   | 높은 성능 목표        | `--time intensive`                 |
+| 🏆 full    | ~2시간+   | 최고 성능             | `--time full`                      |
+
+### 명령줄 사용 예시
+
+```bash
+# 표준 학습 (약 15분)
+python scripts/smart_train.py --time standard
+
+# 깊은 학습 (약 30분)
+python scripts/smart_train.py --time deep
+
+# 기보 파일 없이 학습
+python scripts/smart_train.py --time standard --no-gibo
+
+# 기존 모델에서 계속 학습
+python scripts/smart_train.py --time deep --load models/nnue_model.json
+
+# 시스템 정보만 확인
+python scripts/smart_train.py --info-only
+```
+
+### 자동 최적화 기능
+
+스마트 학습은 시스템에 따라 자동으로 설정을 조정합니다:
+
+- **GPU 감지**: CUDA 또는 Apple Silicon (MPS) GPU가 있으면 자동으로 GPU 학습
+- **메모리 최적화**: RAM/VRAM 크기에 따라 배치 크기 자동 조절
+- **병렬 처리**: CPU 코어 수에 따라 데이터 생성 병렬화
+- **기보 활용**: 기보 파일이 있으면 자동으로 기보 기반 학습 포함
+
+### 출력 예시
+
+```
+============================================================
+🖥️  시스템 환경 분석
+============================================================
+
+📌 운영체제: Darwin 24.6.0
+📌 CPU: arm
+   - 코어: 8개 / 스레드: 8개
+📌 RAM: 16.0 GB
+📌 GPU: Apple Silicon (MPS)
+   - VRAM: 8.0 GB
+   ✅ GPU 가속 사용 가능
+📌 기보 파일: 59개 발견
+   ✅ 기보 기반 학습 가능
+
+============================================================
+⚙️  학습 설정
+============================================================
+
+📋 학습 방식: GPU 가속 학습
+📋 학습 포지션 수: 15,000개
+📋 에포크 수: 50회
+📋 배치 사이즈: 512
+📋 학습률: 0.0005
+
+⏱️  예상 학습 시간: 약 15분
+```
+
+---
+
 ## 학습 방법
 
 ### 1. GPU 학습 (권장)
@@ -161,7 +252,62 @@ python scripts/train_nnue.py --method deepsearch --positions 5000 --epochs 50
 python scripts/train_nnue.py --method iterative --iterations 5
 ```
 
-### 3. 반복 학습 (Iterative Training)
+### 3. 기보 학습 (신규)
+
+실제 대국 기보 파일(.gib)을 사용하여 학습합니다. 고수들의 실전 데이터로 학습하므로 더 현실적인 평가 함수를 만들 수 있습니다.
+
+```bash
+python scripts/train_nnue_gibo.py [옵션]
+```
+
+#### 주요 옵션
+
+| 옵션                   | 기본값                 | 설명                          |
+| ---------------------- | ---------------------- | ----------------------------- |
+| `--gibo-dir`           | gibo                   | 기보 파일이 있는 디렉토리     |
+| `--epochs`             | 50                     | 학습 에폭 수                  |
+| `--batch-size`         | 256                    | 배치 크기                     |
+| `--lr`                 | 0.001                  | 학습률                        |
+| `--positions-per-game` | 50                     | 게임당 추출할 최대 포지션 수  |
+| `--load`               | -                      | 기존 모델 로드 (fine-tuning)  |
+| `--output`             | nnue_gibo_model.json   | 출력 파일명                   |
+
+#### 예시
+
+```bash
+# 기본 기보 학습
+python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30
+
+# 낮은 학습률로 안정적 학습
+python scripts/train_nnue_gibo.py --gibo-dir gibo --lr 0.0001 --epochs 50
+
+# 기존 모델에서 fine-tuning
+python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gpu_model.json --epochs 20
+
+# 상세 설정
+python scripts/train_nnue_gibo.py \
+    --gibo-dir gibo \
+    --epochs 50 \
+    --lr 0.0001 \
+    --batch-size 128 \
+    --positions-per-game 30 \
+    --output models/my_gibo_model.json
+```
+
+#### 지원 기보 형식
+
+- 카카오 장기 기보 (.gib)
+- EUC-KR/CP949 인코딩 자동 인식
+- 차림 정보 (상마상마, 마상마상 등) 파싱
+- 대국 결과 파싱 (초 승/한 승/무승부)
+
+#### 기보 학습의 장점
+
+- **실전 데이터**: 고수들의 실제 대국에서 학습
+- **효율적**: 자기대전보다 빠르게 다양한 상황 학습
+- **현실적 평가**: 실제 대국에서 나타나는 패턴 학습
+
+### 4. 반복 학습 (Iterative Training)
 
 모델이 자기 자신과 대전하면서 점진적으로 개선됩니다.
 
@@ -261,6 +407,35 @@ pip uninstall torch
 pip install torch
 ```
 
+### 기보 파싱 오류
+
+**증상**: `0 games parsed` 또는 인코딩 오류
+
+**원인**:
+- 기보 파일 인코딩 문제
+- 지원하지 않는 기보 형식
+
+**해결**:
+- 기보 파일이 EUC-KR 또는 CP949 인코딩인지 확인
+- 카카오 장기 기보 형식(.gib) 사용
+
+### 기보 학습 시 Loss 불안정
+
+**증상**: Loss 값이 폭발하거나 NaN 발생
+
+**원인**:
+- 학습률이 너무 높음
+- Gradient explosion
+
+**해결**:
+```bash
+# 낮은 학습률 사용 (권장)
+python scripts/train_nnue_gibo.py --lr 0.0001 --batch-size 128
+
+# 또는 더 작은 배치 크기
+python scripts/train_nnue_gibo.py --lr 0.00005 --batch-size 64
+```
+
 ---
 
 ## 고급 사용법
@@ -302,6 +477,20 @@ python scripts/train_nnue_gpu.py --feature-size 1024 --hidden1 512 --hidden2 128
 python scripts/train_nnue_gpu.py --feature-size 256 --hidden1 128 --hidden2 32
 ```
 
+### 기보 학습 고급 설정
+
+```bash
+# 게임당 더 많은 포지션 추출
+python scripts/train_nnue_gibo.py --positions-per-game 100 --gibo-dir gibo
+
+# 특정 디바이스 사용
+python scripts/train_nnue_gibo.py --device cuda --gibo-dir gibo
+
+# 여러 기보 디렉토리 사용 (여러 번 실행)
+python scripts/train_nnue_gibo.py --gibo-dir gibo1 --output models/model_v1.json
+python scripts/train_nnue_gibo.py --gibo-dir gibo2 --load models/model_v1.json --output models/model_v2.json
+```
+
 ---
 
 ## 학습된 모델 사용
@@ -330,22 +519,73 @@ curl http://localhost:8000/api/model-info
 
 ## 권장 학습 전략
 
-### 1단계: 빠른 테스트
+### 방법 0: 스마트 학습 (가장 쉬움) 🌟
+
+복잡한 설정 없이 한 줄로 최적의 학습을 시작합니다.
+
+```bash
+# 대화형 모드 - 메뉴에서 선택
+python scripts/smart_train.py
+
+# 또는 직접 시간 지정
+python scripts/smart_train.py --time deep
+```
+
+### 방법 A: 자기대전 학습 (기보 없이)
+
+#### 1단계: 빠른 테스트
 
 ```bash
 python scripts/train_nnue_gpu.py --positions 5000 --epochs 30 --skip-eval
 ```
 
-### 2단계: 기본 학습
+#### 2단계: 기본 학습
 
 ```bash
 python scripts/train_nnue_gpu.py --parallel --positions 30000 --epochs 100
 ```
 
-### 3단계: 반복 개선
+#### 3단계: 반복 개선
 
 ```bash
 python scripts/train_nnue_gpu.py --method iterative --iterations 5 --load models/nnue_gpu_model.json
+```
+
+### 방법 B: 기보 기반 학습 (권장)
+
+기보 파일이 있다면 이 방법이 더 효과적입니다.
+
+#### 1단계: 기보 학습
+
+```bash
+python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30 --lr 0.0001
+```
+
+#### 2단계: Fine-tuning
+
+```bash
+python scripts/train_nnue_gibo.py --gibo-dir gibo --load models/nnue_gibo_model.json --epochs 20 --lr 0.00005
+```
+
+#### 3단계: 반복 개선 (선택)
+
+```bash
+python scripts/train_nnue_gpu.py --method iterative --iterations 3 --load models/nnue_gibo_model.json
+```
+
+### 방법 C: 하이브리드 학습 (최강)
+
+자기대전과 기보 학습을 결합합니다.
+
+```bash
+# 1. 기보로 기본 학습
+python scripts/train_nnue_gibo.py --gibo-dir gibo --epochs 30 --output models/base_model.json
+
+# 2. 자기대전으로 보강
+python scripts/train_nnue_gpu.py --parallel --positions 50000 --load models/base_model.json --output models/hybrid_model.json
+
+# 3. 반복 개선
+python scripts/train_nnue_gpu.py --method iterative --iterations 5 --load models/hybrid_model.json
 ```
 
 ---
@@ -354,21 +594,48 @@ python scripts/train_nnue_gpu.py --method iterative --iterations 5 --load models
 
 ### 학습 시간 (M2 MacBook Air 기준)
 
+#### 자기대전 학습
+
 | 설정                                 | 시간  |
 | ------------------------------------ | ----- |
 | 5K positions, 50 epochs              | ~1분  |
 | 10K positions, 100 epochs            | ~3분  |
 | 50K positions, 100 epochs (parallel) | ~10분 |
 
+#### 기보 학습
+
+| 설정                                    | 시간  |
+| --------------------------------------- | ----- |
+| 1,000 games, 30 epochs                  | ~2분  |
+| 1,000 games, 50 epochs, lr=0.0001       | ~3분  |
+
 ### 모델 강도
 
 학습량이 많을수록 강해지지만, 수확 체감이 있습니다.
+
+#### 자기대전 학습
 
 | 포지션 수 | 예상 강도 |
 | --------- | --------- |
 | 5,000     | 기본      |
 | 20,000    | 중급      |
 | 100,000+  | 상급      |
+
+#### 기보 학습
+
+| 게임 수 | 예상 특징                      |
+| ------- | ------------------------------ |
+| 500+    | 기본 패턴 학습                 |
+| 1,000+  | 다양한 전략 학습               |
+| 5,000+  | 고급 전술, 실전적 평가         |
+
+### 학습 방법별 특성
+
+| 방법       | 장점                              | 단점                       |
+| ---------- | --------------------------------- | -------------------------- |
+| 자기대전   | 전술적 계산력 향상                | 시간이 오래 걸림           |
+| 기보 학습  | 실전적 평가, 빠른 학습            | 기보 데이터 필요           |
+| 하이브리드 | 양쪽 장점 결합                    | 설정이 복잡함              |
 
 ---
 

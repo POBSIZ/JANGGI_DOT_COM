@@ -93,13 +93,27 @@ print(f"Position evaluation: {evaluation}")
 
 현재 `models/` 디렉토리에 있는 모델들:
 
-- `nnue_gpu_iter_1.json` - GPU 학습 1회차 모델
-- `nnue_gpu_iter_2.json` - GPU 학습 2회차 모델
-- `nnue_gpu_iter_3.json` - GPU 학습 3회차 모델
-- `nnue_gpu_iter_4.json` - GPU 학습 4회차 모델
-- `nnue_gpu_iter_5.json` - GPU 학습 5회차 모델 (가장 최신)
+### 자기대전 학습 모델
 
-일반적으로 더 많은 반복(iteration)을 거친 모델일수록 더 강합니다.
+- `nnue_gpu_model.json` - GPU 기본 학습 모델
+- `nnue_gpu_iter_1.json` ~ `nnue_gpu_iter_5.json` - GPU 반복 학습 모델
+- `nnue_model.json` - CPU 학습 모델
+
+### 기보 학습 모델
+
+- `nnue_gibo_model.json` - 실제 대국 기보로 학습된 모델
+
+### 모델 선택 가이드
+
+| 모델 | 특징 | 권장 용도 |
+|------|------|-----------|
+| `nnue_gibo_model.json` | 실전 기보 기반, 현실적 평가 | 일반 게임 |
+| `nnue_gpu_iter_5.json` | 가장 많은 자기대전 학습 | 강한 AI |
+| `nnue_gpu_model.json` | 기본 GPU 학습 | 빠른 테스트 |
+
+일반적으로:
+- **기보 학습 모델**: 실전적인 수 선택, 현실적인 평가
+- **자기대전 모델**: 전술적 계산력, 높은 반복수일수록 강함
 
 ## 4. 모델 정보 확인
 
