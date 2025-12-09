@@ -2,9 +2,10 @@
 
 import os
 import asyncio
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -13,6 +14,7 @@ from time import time
 
 from janggi.board import Board, Move, Side, Piece, PieceType
 from janggi.engine import Engine
+from janggi.multiplayer import get_connection_manager
 
 
 # Thread pool for CPU-intensive AI operations
@@ -62,6 +64,7 @@ class GameState:
         self.lock = asyncio.Lock()
         self.last_access = time()
         self.is_processing = False  # AI 처리 중 여부
+        self.undo_stack = []  # Stack of (board_state, move_history) for undo
 
 
 # Global game state with proper locking
@@ -157,12 +160,16 @@ class BoardResponse(BaseModel):
     side_to_move: str
     game_over: bool
     winner: Optional[str]
-    draw_reason: Optional[str] = None  # 무승부 사유: "repetition", "stalemate", "agreement" 등
+    draw_reason: Optional[str] = (
+        None  # 무승부 사유: "repetition", "stalemate", "agreement" 등
+    )
     in_check: bool
     legal_moves: List[Dict[str, str]]
     move_history: List[
         Dict[str, Any]
     ]  # 이동 히스토리 (move_number는 int, captured는 bool)
+    can_undo: bool = False  # 수 되돌리기 가능 여부
+    in_opening_book: bool = False  # 오프닝 북에 있는지 여부
 
 
 def square_to_coords(square: str) -> tuple:
@@ -171,6 +178,28 @@ def square_to_coords(square: str) -> tuple:
     file = files.index(square[0])
     rank = int(square[1:]) - 1
     return (file, rank)
+
+
+def _copy_board_state(board: Board) -> dict:
+    """Create a serializable copy of the board state for undo."""
+    import copy
+
+    return {
+        "board": copy.deepcopy(board.board),
+        "side_to_move": board.side_to_move,
+        "move_history": copy.deepcopy(board.move_history),
+        "position_history": copy.deepcopy(board.position_history),
+        "_current_hash": board._current_hash,
+    }
+
+
+def _restore_board_state(board: Board, state: dict) -> None:
+    """Restore board state from a saved copy."""
+    board.board = state["board"]
+    board.side_to_move = state["side_to_move"]
+    board.move_history = state["move_history"]
+    board.position_history = state["position_history"]
+    board._current_hash = state["_current_hash"]
 
 
 def coords_to_square(file: int, rank: int) -> str:
@@ -258,8 +287,6 @@ async def new_game(request: NewGameRequest, req: Request):
         depth=request.depth, use_nnue=request.use_nnue, nnue_model_path=nnue_model_path
     )
 
-    print(f"engine: {engine}")
-
     # Thread-safe game creation
     async with games_lock:
         games[request.game_id] = GameState(board, engine)
@@ -299,6 +326,114 @@ async def get_board(game_id: str, req: Request):
     if not await check_rate_limit(req):
         raise HTTPException(
             status_code=429, detail="Too many requests. Please slow down."
+        )
+
+    # 멀티플레이어 게임 처리 (mp_ 접두사)
+    if game_id.startswith("mp_"):
+        room_id = game_id[3:]  # "mp_" 제거
+        manager = get_connection_manager()
+        room = manager.room_manager.get_room(room_id)
+        
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
+        
+        # 멀티플레이어 게임의 경우 Board 객체를 재구성
+        # move_history를 기반으로 현재 보드 상태를 만듭니다
+        board = Board(
+            han_formation=room.han_formation,
+            cho_formation=room.cho_formation,
+        )
+        
+        # move_history를 기반으로 수를 적용
+        for move_record in room.move_history:
+            from_square = move_record.get("from")
+            to_square = move_record.get("to")
+            if from_square and to_square:
+                try:
+                    from_file, from_rank = square_to_coords(from_square)
+                    to_file, to_rank = square_to_coords(to_square)
+                    move = Move(from_file, from_rank, to_file, to_rank)
+                    board.make_move(move)
+                except Exception:
+                    # 이동 실패 시 무시하고 계속 진행
+                    pass
+        
+        # 현재 턴 설정
+        board.side_to_move = Side.CHO if room.current_turn.value == "CHO" else Side.HAN
+        
+        # Convert board to 2D array
+        board_array = []
+        board_korean = []
+        for rank in range(board.RANKS - 1, -1, -1):  # Reverse for display
+            row = []
+            row_korean = []
+            for file in range(board.FILES):
+                piece = board.get_piece(file, rank)
+                row.append(piece_to_string(piece))
+                row_korean.append(piece_to_korean_dict(piece))
+            board_array.append(row)
+            board_korean.append(row_korean)
+        
+        # Get legal moves
+        try:
+            moves = board.generate_moves()
+            legal_moves = []
+            for move in moves:
+                legal_moves.append(
+                    {
+                        "from": coords_to_square(move.from_file, move.from_rank),
+                        "to": coords_to_square(move.to_file, move.to_rank),
+                    }
+                )
+        except Exception as e:
+            import traceback
+            print(f"Error generating moves: {e}")
+            traceback.print_exc()
+            legal_moves = []
+        
+        # Check game status
+        game_over = room.status.value in ["finished", "abandoned"]
+        winner = None
+        draw_reason = None
+        
+        if game_over:
+            # 게임 종료 사유 확인 (room 상태에서 추론)
+            if room.status.value == "finished":
+                # winner는 room 정보에서 가져와야 하는데, 현재 GameRoom에는 winner 필드가 없음
+                # move_history의 마지막 정보나 다른 방법으로 확인 필요
+                pass
+        
+        # Ensure move_history exists
+        if not hasattr(board, "move_history"):
+            board.move_history = []
+        
+        # Check if in check
+        try:
+            in_check = board.is_in_check(board.side_to_move)
+        except Exception as e:
+            import traceback
+            print(f"Error checking if in check: {e}")
+            traceback.print_exc()
+            in_check = False
+        
+        # 멀티플레이어 게임은 undo 불가
+        can_undo = False
+        
+        # 멀티플레이어 게임은 opening book 사용 안 함
+        in_opening_book = False
+        
+        return BoardResponse(
+            board=board_array,
+            board_korean=board_korean,
+            side_to_move=board.side_to_move.value,
+            game_over=game_over,
+            winner=winner,
+            draw_reason=draw_reason,
+            in_check=in_check,
+            legal_moves=legal_moves,
+            move_history=room.move_history,  # 멀티플레이어 게임의 move_history 사용
+            can_undo=can_undo,
+            in_opening_book=in_opening_book,
         )
 
     try:
@@ -376,6 +511,16 @@ async def get_board(game_id: str, req: Request):
                 traceback.print_exc()
                 in_check = False
 
+            # Check if can undo
+            can_undo = len(game_state.undo_stack) > 0
+
+            # Check if in opening book
+            in_opening_book = False
+            try:
+                in_opening_book = game_state.engine.is_in_opening_book(board)
+            except Exception:
+                pass
+
             return BoardResponse(
                 board=board_array,
                 board_korean=board_korean,
@@ -386,6 +531,8 @@ async def get_board(game_id: str, req: Request):
                 in_check=in_check,
                 legal_moves=legal_moves,
                 move_history=board.move_history,
+                can_undo=can_undo,
+                in_opening_book=in_opening_book,
             )
     except HTTPException:
         raise
@@ -416,7 +563,16 @@ async def make_move(request: MoveRequest, req: Request):
 
         # Lock으로 동시 수정 방지
         async with game_state.lock:
+            # 이동 전 상태 저장 (undo 용)
+            board_copy = _copy_board_state(game_state.board)
+            game_state.undo_stack.append(board_copy)
+            # 최대 50수까지만 undo 가능하도록 제한
+            if len(game_state.undo_stack) > 50:
+                game_state.undo_stack.pop(0)
+
             if not game_state.board.make_move(move):
+                # 이동 실패시 undo 스택에서 제거
+                game_state.undo_stack.pop()
                 raise HTTPException(status_code=400, detail="Illegal move")
 
             # Check for repetition after move
@@ -437,6 +593,51 @@ async def make_move(request: MoveRequest, req: Request):
 def _run_ai_search(engine: Engine, board: Board):
     """CPU 집약적인 AI 검색을 별도 스레드에서 실행."""
     return engine.search(board)
+
+
+@app.post("/api/undo/{game_id}")
+async def undo_move(game_id: str, req: Request):
+    """Undo the last move (or last two moves to undo AI's move as well)."""
+    # Rate limiting 체크
+    if not await check_rate_limit(req):
+        raise HTTPException(
+            status_code=429, detail="Too many requests. Please slow down."
+        )
+
+    game_state = await get_game_state(game_id)
+
+    async with game_state.lock:
+        if not game_state.undo_stack:
+            raise HTTPException(status_code=400, detail="No moves to undo")
+
+        # Restore the last saved state
+        last_state = game_state.undo_stack.pop()
+        _restore_board_state(game_state.board, last_state)
+
+    return {"status": "ok", "message": "Move undone successfully"}
+
+
+@app.post("/api/undo-pair/{game_id}")
+async def undo_move_pair(game_id: str, req: Request):
+    """Undo the last two moves (player's move and AI's move)."""
+    # Rate limiting 체크
+    if not await check_rate_limit(req):
+        raise HTTPException(
+            status_code=429, detail="Too many requests. Please slow down."
+        )
+
+    game_state = await get_game_state(game_id)
+
+    async with game_state.lock:
+        if len(game_state.undo_stack) < 2:
+            raise HTTPException(status_code=400, detail="Not enough moves to undo")
+
+        # Pop twice to undo both moves
+        game_state.undo_stack.pop()  # AI's move
+        last_state = game_state.undo_stack.pop()  # Player's move
+        _restore_board_state(game_state.board, last_state)
+
+    return {"status": "ok", "message": "Two moves undone successfully"}
 
 
 @app.post("/api/ai-move/{game_id}")
@@ -471,10 +672,19 @@ async def ai_move(game_id: str, req: Request):
 
         # 이동 적용 시 다시 Lock 획득
         async with game_state.lock:
+            # 이동 전 상태 저장 (undo 용)
+            board_copy = _copy_board_state(game_state.board)
+            game_state.undo_stack.append(board_copy)
+            # 최대 50수까지만 undo 가능하도록 제한
+            if len(game_state.undo_stack) > 50:
+                game_state.undo_stack.pop(0)
+
             if not game_state.board.make_move(best_move):
+                game_state.undo_stack.pop()  # 이동 실패시 undo 스택에서 제거
                 raise HTTPException(status_code=500, detail="AI generated illegal move")
 
             nodes_searched = game_state.engine.nodes_searched
+            used_opening_book = game_state.engine.used_opening_book
 
             # Check for repetition after move
             game_over = False
@@ -492,6 +702,7 @@ async def ai_move(game_id: str, req: Request):
                 "to": coords_to_square(best_move.to_file, best_move.to_rank),
             },
             "nodes_searched": nodes_searched,
+            "from_opening_book": used_opening_book,
         }
 
         if game_over:
@@ -534,6 +745,76 @@ async def get_model_info():
                 models.append({"path": model_path, "is_default": False, "exists": True})
 
     return {"default_model_path": DEFAULT_NNUE_MODEL_PATH, "models": models}
+
+
+@app.get("/api/opening-book-info/{game_id}")
+async def get_opening_book_info(game_id: str, req: Request):
+    """Get information about the opening book."""
+    # Rate limiting 체크
+    if not await check_rate_limit(req):
+        raise HTTPException(
+            status_code=429, detail="Too many requests. Please slow down."
+        )
+
+    game_state = await get_game_state(game_id)
+
+    async with game_state.lock:
+        stats = game_state.engine.get_opening_book_stats()
+        in_book = game_state.engine.is_in_opening_book(game_state.board)
+
+    return {
+        "statistics": stats,
+        "in_book": in_book,
+        "enabled": game_state.engine.use_opening_book,
+    }
+
+
+# ============================================
+# WebSocket Multiplayer Endpoints
+# ============================================
+
+@app.websocket("/ws/multiplayer/{player_id}")
+async def websocket_multiplayer(websocket: WebSocket, player_id: str):
+    """WebSocket endpoint for multiplayer games."""
+    manager = get_connection_manager()
+    await manager.connect(websocket, player_id)
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await manager.handle_message(player_id, data)
+    except WebSocketDisconnect:
+        await manager.disconnect(player_id)
+    except Exception as e:
+        print(f"WebSocket error for player {player_id}: {e}")
+        await manager.disconnect(player_id)
+
+
+@app.get("/api/multiplayer/rooms")
+async def get_available_rooms():
+    """Get list of available rooms to join."""
+    manager = get_connection_manager()
+    rooms = manager.room_manager.get_available_rooms()
+    return {"rooms": rooms}
+
+
+@app.get("/api/multiplayer/room/{room_id}")
+async def get_room_info(room_id: str):
+    """Get information about a specific room."""
+    manager = get_connection_manager()
+    room = manager.room_manager.get_room(room_id)
+    
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    
+    return {"room": room.to_dict()}
+
+
+@app.post("/api/multiplayer/generate-player-id")
+async def generate_player_id():
+    """Generate a unique player ID for WebSocket connection."""
+    player_id = str(uuid.uuid4())
+    return {"player_id": player_id}
 
 
 # Mount static files
