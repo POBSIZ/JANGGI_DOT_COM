@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import GamePage from './pages/GamePage';
-import MultiplayerPage from './pages/MultiplayerPage';
 import './App.css';
 
 function App() {
@@ -8,7 +7,6 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<GamePage />} />
-        <Route path="/multiplayer" element={<MultiplayerPage />} />
       </Routes>
     </BrowserRouter>
   );
