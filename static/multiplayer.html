@@ -1,0 +1,1617 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>장기 멀티플레이어</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700&display=swap");
+
+      :root {
+        --bg-primary: #1a1a2e;
+        --bg-secondary: #16213e;
+        --bg-tertiary: #0f3460;
+        --gold: #c9a66b;
+        --gold-light: #d4b37a;
+        --red: #c41e3a;
+        --blue: #1a5fb4;
+        --green: #28a745;
+        --text-primary: #e8e8f0;
+        --text-secondary: #b8b8c8;
+        --text-muted: #8a8a9a;
+        --border-light: rgba(255, 255, 255, 0.1);
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 50%, var(--bg-tertiary) 100%);
+        min-height: 100vh;
+        color: var(--text-primary);
+      }
+
+      .header {
+        background: rgba(0, 0, 0, 0.3);
+        padding: 16px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      .header h1 {
+        color: var(--gold);
+        font-size: 1.8em;
+        font-weight: 400;
+        letter-spacing: 2px;
+      }
+
+      .header-buttons {
+        display: flex;
+        gap: 12px;
+      }
+
+      .btn {
+        padding: 10px 20px;
+        font-size: 14px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        transition: all 0.2s;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--gold) 0%, #a07d4a 100%);
+        color: var(--bg-primary);
+      }
+
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(201, 166, 107, 0.4);
+      }
+
+      .btn-secondary {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text-primary);
+        border: 1px solid var(--border-light);
+      }
+
+      .btn-secondary:hover {
+        background: rgba(255, 255, 255, 0.15);
+      }
+
+      .btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      /* Lobby View */
+      .lobby-container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 32px 24px;
+      }
+
+      .lobby-header {
+        text-align: center;
+        margin-bottom: 40px;
+      }
+
+      .lobby-header h2 {
+        color: var(--text-primary);
+        font-size: 2em;
+        margin-bottom: 12px;
+      }
+
+      .lobby-header p {
+        color: var(--text-secondary);
+        font-size: 1.1em;
+      }
+
+      .lobby-actions {
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+        margin-bottom: 40px;
+        flex-wrap: wrap;
+      }
+
+      .room-list {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border-light);
+        border-radius: 16px;
+        padding: 24px;
+      }
+
+      .room-list h3 {
+        color: var(--gold);
+        font-size: 1.3em;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      .room-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid var(--border-light);
+        border-radius: 12px;
+        margin-bottom: 12px;
+        transition: all 0.2s;
+      }
+
+      .room-item:hover {
+        background: rgba(255, 255, 255, 0.05);
+        border-color: var(--gold);
+      }
+
+      .room-info {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .room-id {
+        font-size: 1.1em;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .room-details {
+        font-size: 0.9em;
+        color: var(--text-secondary);
+      }
+
+      .no-rooms {
+        text-align: center;
+        padding: 40px;
+        color: var(--text-muted);
+      }
+
+      /* Room View */
+      .room-container {
+        display: none;
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .room-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--border-light);
+      }
+
+      .room-title {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .room-code {
+        background: rgba(201, 166, 107, 0.15);
+        color: var(--gold);
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-family: monospace;
+        font-size: 1.2em;
+        letter-spacing: 2px;
+      }
+
+      .game-layout {
+        display: grid;
+        grid-template-columns: 280px 1fr 300px;
+        gap: 24px;
+      }
+
+      /* Player panels */
+      .player-panel {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border-light);
+        border-radius: 16px;
+        padding: 20px;
+      }
+
+      .player-card {
+        padding: 16px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 12px;
+        margin-bottom: 16px;
+      }
+
+      .player-card.cho {
+        border-left: 4px solid var(--blue);
+      }
+
+      .player-card.han {
+        border-left: 4px solid var(--red);
+      }
+
+      .player-card.waiting {
+        border-left: 4px solid var(--text-muted);
+        opacity: 0.6;
+      }
+
+      .player-nickname {
+        font-size: 1.1em;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .player-side {
+        font-size: 0.85em;
+        color: var(--text-secondary);
+      }
+
+      .player-status {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        margin-top: 8px;
+      }
+
+      .player-status.ready {
+        background: rgba(40, 167, 69, 0.2);
+        color: var(--green);
+      }
+
+      .player-status.not-ready {
+        background: rgba(255, 193, 7, 0.2);
+        color: #ffc107;
+      }
+
+      .formation-select {
+        margin-top: 16px;
+      }
+
+      .formation-select label {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 0.9em;
+        margin-bottom: 8px;
+      }
+
+      .formation-select select {
+        width: 100%;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 1em;
+      }
+
+      .ready-btn {
+        width: 100%;
+        margin-top: 16px;
+        padding: 14px;
+        font-size: 1em;
+      }
+
+      /* Board container */
+      .board-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .board-wrapper {
+        position: relative;
+        background: linear-gradient(145deg, var(--gold) 0%, #a07d4a 100%);
+        padding: 20px;
+        border-radius: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+      }
+
+      #gameCanvas {
+        display: block;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+
+      .game-status {
+        margin-top: 16px;
+        text-align: center;
+        padding: 16px 24px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 12px;
+        font-size: 1.1em;
+      }
+
+      .turn-indicator {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        margin-right: 8px;
+      }
+
+      .turn-indicator.cho {
+        background: var(--blue);
+      }
+
+      .turn-indicator.han {
+        background: var(--red);
+      }
+
+      /* Chat panel */
+      .chat-panel {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--border-light);
+        border-radius: 16px;
+        display: flex;
+        flex-direction: column;
+        height: 600px;
+      }
+
+      .chat-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border-light);
+        font-weight: 600;
+        color: var(--gold);
+      }
+
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+      }
+
+      .chat-message {
+        margin-bottom: 12px;
+        padding: 10px 14px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 8px;
+      }
+
+      .chat-message.system {
+        background: rgba(201, 166, 107, 0.1);
+        color: var(--gold);
+        text-align: center;
+        font-style: italic;
+      }
+
+      .chat-author {
+        font-weight: 600;
+        font-size: 0.85em;
+        margin-bottom: 4px;
+      }
+
+      .chat-author.cho {
+        color: var(--blue);
+      }
+
+      .chat-author.han {
+        color: var(--red);
+      }
+
+      .chat-text {
+        font-size: 0.95em;
+        color: var(--text-secondary);
+      }
+
+      .chat-input {
+        padding: 16px;
+        border-top: 1px solid var(--border-light);
+        display: flex;
+        gap: 8px;
+      }
+
+      .chat-input input {
+        flex: 1;
+        padding: 10px 14px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-light);
+        border-radius: 8px;
+        color: var(--text-primary);
+        font-size: 0.95em;
+      }
+
+      .chat-input input::placeholder {
+        color: var(--text-muted);
+      }
+
+      .chat-send-btn {
+        padding: 10px 20px;
+      }
+
+      /* Game controls */
+      .game-controls {
+        display: flex;
+        gap: 12px;
+        margin-top: 16px;
+        justify-content: center;
+      }
+
+      /* Modal */
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .modal {
+        background: linear-gradient(145deg, #2d2d44 0%, #1f1f35 100%);
+        border-radius: 16px;
+        padding: 32px;
+        max-width: 420px;
+        width: 90%;
+        box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
+      }
+
+      .modal h3 {
+        color: var(--gold);
+        margin-bottom: 24px;
+        text-align: center;
+        font-size: 1.4em;
+      }
+
+      .modal-input {
+        width: 100%;
+        padding: 14px 16px;
+        background: rgba(0, 0, 0, 0.3);
+        border: 1px solid var(--border-light);
+        border-radius: 10px;
+        color: var(--text-primary);
+        font-size: 1em;
+        margin-bottom: 16px;
+      }
+
+      .modal-input::placeholder {
+        color: var(--text-muted);
+      }
+
+      .modal-buttons {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+      }
+
+      .modal-buttons .btn {
+        flex: 1;
+      }
+
+      /* Connection status */
+      .connection-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 20px;
+        font-size: 0.85em;
+      }
+
+      .connection-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+
+      .connection-dot.disconnected {
+        background: var(--red);
+      }
+
+      /* Toast */
+      .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .toast {
+        background: rgba(45, 45, 68, 0.95);
+        padding: 16px 20px;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        animation: slideIn 0.3s ease-out;
+        border-left: 4px solid var(--gold);
+        color: var(--text-primary);
+      }
+
+      .toast.error {
+        border-left-color: var(--red);
+      }
+
+      .toast.success {
+        border-left-color: var(--green);
+      }
+
+      @keyframes slideIn {
+        from { transform: translateX(100%); opacity: 0; }
+        to { transform: translateX(0); opacity: 1; }
+      }
+
+      /* Responsive */
+      @media (max-width: 1200px) {
+        .game-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .player-panel {
+          order: 2;
+        }
+
+        .board-section {
+          order: 1;
+        }
+
+        .chat-panel {
+          order: 3;
+          height: 300px;
+        }
+      }
+
+      @media (max-width: 768px) {
+        .header h1 {
+          font-size: 1.3em;
+        }
+
+        .lobby-header h2 {
+          font-size: 1.5em;
+        }
+
+        .room-item {
+          flex-direction: column;
+          gap: 12px;
+          align-items: flex-start;
+        }
+
+        .board-wrapper {
+          padding: 10px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Header -->
+    <header class="header">
+      <h1>장기 멀티플레이어</h1>
+      <div class="header-buttons">
+        <div class="connection-status">
+          <div class="connection-dot" id="connectionDot"></div>
+          <span id="connectionText">연결됨</span>
+        </div>
+        <a href="/" class="btn btn-secondary">AI 대전</a>
+      </div>
+    </header>
+
+    <!-- Lobby View -->
+    <div class="lobby-container" id="lobbyView">
+      <div class="lobby-header">
+        <h2>🎮 온라인 대전</h2>
+        <p>다른 플레이어와 실시간으로 대국하세요</p>
+      </div>
+
+      <div class="lobby-actions">
+        <button class="btn btn-primary" onclick="showCreateRoomModal()">
+          ➕ 방 만들기
+        </button>
+        <button class="btn btn-secondary" onclick="showJoinRoomModal()">
+          🚪 방 코드로 입장
+        </button>
+        <button class="btn btn-secondary" onclick="refreshRooms()">
+          🔄 새로고침
+        </button>
+      </div>
+
+      <div class="room-list">
+        <h3>대기중인 방</h3>
+        <div id="roomList">
+          <div class="no-rooms">아직 대기중인 방이 없습니다</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Room View -->
+    <div class="room-container" id="roomView">
+      <div class="room-header">
+        <div class="room-title">
+          <h2>대국실</h2>
+          <span class="room-code" id="roomCode">-</span>
+        </div>
+        <div>
+          <button class="btn btn-secondary" onclick="leaveRoom()">나가기</button>
+        </div>
+      </div>
+
+      <div class="game-layout">
+        <!-- Player Panel -->
+        <div class="player-panel">
+          <h3 style="color: var(--gold); margin-bottom: 16px;">플레이어</h3>
+          
+          <div class="player-card cho" id="choPlayerCard">
+            <div class="player-nickname" id="choNickname">대기중...</div>
+            <div class="player-side">초 (선공)</div>
+            <span class="player-status not-ready" id="choStatus">준비 대기</span>
+          </div>
+
+          <div class="player-card han" id="hanPlayerCard">
+            <div class="player-nickname" id="hanNickname">대기중...</div>
+            <div class="player-side">한 (후공)</div>
+            <span class="player-status not-ready" id="hanStatus">준비 대기</span>
+          </div>
+
+          <div class="formation-select" id="formationSelect">
+            <label>나의 상차림</label>
+            <select id="formationDropdown" onchange="setFormation()">
+              <option value="마상상마">마상상마 (기본)</option>
+              <option value="상마상마">상마상마</option>
+              <option value="마상마상">마상마상</option>
+              <option value="상마마상">상마마상</option>
+            </select>
+          </div>
+
+          <button class="btn btn-primary ready-btn" id="readyBtn" onclick="toggleReady()">
+            준비 완료
+          </button>
+
+          <div class="game-controls" id="gameControls" style="display: none;">
+            <button class="btn btn-secondary" onclick="offerDraw()">무승부 제안</button>
+            <button class="btn btn-secondary" style="background: rgba(220, 53, 69, 0.2); color: #ff6b7a;" onclick="resign()">기권</button>
+          </div>
+        </div>
+
+        <!-- Board Section -->
+        <div class="board-section">
+          <div class="board-wrapper">
+            <canvas id="gameCanvas" width="520" height="580"></canvas>
+          </div>
+          <div class="game-status" id="gameStatus">
+            게임이 시작되기를 기다리고 있습니다...
+          </div>
+        </div>
+
+        <!-- Chat Panel -->
+        <div class="chat-panel">
+          <div class="chat-header">💬 채팅</div>
+          <div class="chat-messages" id="chatMessages"></div>
+          <div class="chat-input">
+            <input type="text" id="chatInput" placeholder="메시지 입력..." onkeypress="handleChatKeypress(event)">
+            <button class="btn btn-primary chat-send-btn" onclick="sendChat()">전송</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Create Room Modal -->
+    <div class="modal-overlay" id="createRoomModal">
+      <div class="modal">
+        <h3>새 방 만들기</h3>
+        <input type="text" class="modal-input" id="createNickname" placeholder="닉네임 입력">
+        <label style="color: var(--text-secondary); display: block; margin-bottom: 8px; font-size: 0.9em;">시간 제한 (선택)</label>
+        <select class="modal-input" id="timeLimit">
+          <option value="">시간 제한 없음</option>
+          <option value="300">5분</option>
+          <option value="600">10분</option>
+          <option value="900">15분</option>
+          <option value="1800">30분</option>
+        </select>
+        <div class="modal-buttons">
+          <button class="btn btn-secondary" onclick="hideModal('createRoomModal')">취소</button>
+          <button class="btn btn-primary" onclick="createRoom()">만들기</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Join Room Modal -->
+    <div class="modal-overlay" id="joinRoomModal">
+      <div class="modal">
+        <h3>방 입장하기</h3>
+        <input type="text" class="modal-input" id="joinNickname" placeholder="닉네임 입력">
+        <input type="text" class="modal-input" id="joinRoomCode" placeholder="방 코드 입력" style="text-transform: uppercase; letter-spacing: 2px;">
+        <div class="modal-buttons">
+          <button class="btn btn-secondary" onclick="hideModal('joinRoomModal')">취소</button>
+          <button class="btn btn-primary" onclick="joinRoomByCode()">입장</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Draw Offer Modal -->
+    <div class="modal-overlay" id="drawOfferModal">
+      <div class="modal">
+        <h3>무승부 제안</h3>
+        <p style="text-align: center; color: var(--text-secondary); margin-bottom: 20px;">
+          상대방이 무승부를 제안했습니다.
+        </p>
+        <div class="modal-buttons">
+          <button class="btn btn-secondary" onclick="respondDraw(false)">거절</button>
+          <button class="btn btn-primary" onclick="respondDraw(true)">수락</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+      // ============================================
+      // State Management
+      // ============================================
+
+      let playerId = null;
+      let nickname = '';
+      let ws = null;
+      let currentRoom = null;
+      let myPlayerSide = null;
+      let isReady = false;
+      let gameInProgress = false;
+
+      // Board state (simplified for multiplayer)
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      let boardData = [];
+      let boardKorean = [];
+      let selectedSquare = null;
+      let legalMoves = [];
+      let lastMoveFrom = null;
+      let lastMoveTo = null;
+      let currentTurn = 'CHO';
+      let boardFlipped = false;
+
+      // Board constants
+      const CANVAS_WIDTH = 520;
+      const CANVAS_HEIGHT = 580;
+      const PADDING = 40;
+      const CELL_WIDTH = (CANVAS_WIDTH - PADDING * 2) / 8;
+      const CELL_HEIGHT = (CANVAS_HEIGHT - PADDING * 2) / 9;
+      const PIECE_RADIUS = 24;
+
+      const COLORS = {
+        boardBg: '#c9a66b',
+        boardLine: '#3d2914',
+        hanColor: '#c41e3a',
+        choColor: '#1a5fb4',
+        selectedGlow: '#90ee90',
+        possibleMove: 'rgba(74, 144, 226, 0.6)',
+        lastMoveFrom: 'rgba(255, 215, 0, 0.4)',
+        lastMoveTo: 'rgba(50, 205, 50, 0.4)',
+      };
+
+      // ============================================
+      // WebSocket Connection
+      // ============================================
+
+      async function initConnection() {
+        // Generate player ID
+        const response = await fetch('/api/multiplayer/generate-player-id', { method: 'POST' });
+        const data = await response.json();
+        playerId = data.player_id;
+
+        // Connect WebSocket
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${protocol}//${window.location.host}/ws/multiplayer/${playerId}`);
+
+        ws.onopen = () => {
+          console.log('WebSocket connected');
+          updateConnectionStatus(true);
+          refreshRooms();
+        };
+
+        ws.onclose = () => {
+          console.log('WebSocket disconnected');
+          updateConnectionStatus(false);
+          setTimeout(initConnection, 3000); // Reconnect
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          updateConnectionStatus(false);
+        };
+
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          handleMessage(data);
+        };
+
+        // Ping every 30 seconds
+        setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, 30000);
+      }
+
+      function updateConnectionStatus(connected) {
+        const dot = document.getElementById('connectionDot');
+        const text = document.getElementById('connectionText');
+        if (connected) {
+          dot.classList.remove('disconnected');
+          text.textContent = '연결됨';
+        } else {
+          dot.classList.add('disconnected');
+          text.textContent = '연결 끊김';
+        }
+      }
+
+      function sendMessage(msg) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(msg));
+        }
+      }
+
+      // ============================================
+      // Message Handlers
+      // ============================================
+
+      function handleMessage(data) {
+        const handlers = {
+          'room_created': handleRoomCreated,
+          'room_joined': handleRoomJoined,
+          'player_joined': handlePlayerJoined,
+          'player_left': handlePlayerLeft,
+          'room_left': handleRoomLeft,
+          'formation_changed': handleFormationChanged,
+          'ready_changed': handleReadyChanged,
+          'game_started': handleGameStarted,
+          'move_made': handleMoveMade,
+          'game_over': handleGameOver,
+          'chat': handleChatMessage,
+          'draw_offered': handleDrawOffered,
+          'draw_declined': handleDrawDeclined,
+          'room_list': handleRoomList,
+          'error': handleError,
+          'pong': () => {},
+        };
+
+        const handler = handlers[data.type];
+        if (handler) {
+          handler(data);
+        } else {
+          console.log('Unknown message type:', data.type);
+        }
+      }
+
+      function handleRoomCreated(data) {
+        currentRoom = data.room;
+        myPlayerSide = data.your_side;
+        showRoomView();
+        updateRoomUI();
+        showToast('방이 생성되었습니다!', 'success');
+        addSystemMessage('방이 생성되었습니다. 상대방을 기다리는 중...');
+      }
+
+      function handleRoomJoined(data) {
+        currentRoom = data.room;
+        myPlayerSide = data.your_side;
+        showRoomView();
+        updateRoomUI();
+        showToast('방에 입장했습니다!', 'success');
+        addSystemMessage('방에 입장했습니다.');
+      }
+
+      function handlePlayerJoined(data) {
+        currentRoom = data.room;
+        updateRoomUI();
+        showToast(`${data.player.nickname}님이 입장했습니다`, 'success');
+        addSystemMessage(`${data.player.nickname}님이 입장했습니다.`);
+      }
+
+      function handlePlayerLeft(data) {
+        currentRoom = data.room;
+        updateRoomUI();
+        showToast('상대방이 나갔습니다', 'error');
+        addSystemMessage('상대방이 나갔습니다.');
+        
+        if (gameInProgress) {
+          gameInProgress = false;
+          document.getElementById('gameStatus').textContent = '상대방이 나가서 게임이 종료되었습니다.';
+        }
+      }
+
+      function handleRoomLeft(data) {
+        currentRoom = null;
+        myPlayerSide = null;
+        isReady = false;
+        gameInProgress = false;
+        showLobbyView();
+        refreshRooms();
+      }
+
+      function handleFormationChanged(data) {
+        currentRoom = data.room;
+        updateRoomUI();
+      }
+
+      function handleReadyChanged(data) {
+        currentRoom = data.room;
+        updateRoomUI();
+      }
+
+      function handleGameStarted(data) {
+        currentRoom = data.room;
+        gameInProgress = true;
+        isReady = false;
+        
+        // Initialize board
+        initializeBoard(data.cho_formation, data.han_formation);
+        
+        document.getElementById('readyBtn').style.display = 'none';
+        document.getElementById('formationSelect').style.display = 'none';
+        document.getElementById('gameControls').style.display = 'flex';
+        
+        updateGameStatus();
+        addSystemMessage('게임이 시작되었습니다!');
+        showToast('게임 시작!', 'success');
+      }
+
+      function handleMoveMade(data) {
+        currentRoom = data.room;
+        const move = data.move;
+        
+        // Update board state based on move
+        lastMoveFrom = parseSquare(move.from);
+        lastMoveTo = parseSquare(move.to);
+        currentTurn = data.room.current_turn;
+        
+        // Fetch updated board from API and redraw
+        updateBoardFromServer();
+        updateGameStatus();
+      }
+
+      function handleGameOver(data) {
+        gameInProgress = false;
+        currentRoom = data.room;
+        
+        let message = '';
+        if (data.reason === 'timeout') {
+          message = `시간 초과! ${data.winner === 'CHO' ? '초' : '한'} 측 승리!`;
+        } else if (data.reason === 'resignation') {
+          message = `기권! ${data.winner === 'CHO' ? '초' : '한'} 측 승리!`;
+        } else if (data.reason === 'draw_agreed') {
+          message = '무승부로 합의되었습니다.';
+        } else if (data.reason === 'checkmate') {
+          message = `체크메이트! ${data.winner === 'CHO' ? '초' : '한'} 측 승리!`;
+        }
+        
+        document.getElementById('gameStatus').textContent = message;
+        document.getElementById('gameControls').style.display = 'none';
+        addSystemMessage(message);
+        showToast(message, data.winner === myPlayerSide ? 'success' : 'error');
+      }
+
+      function handleChatMessage(data) {
+        const messagesDiv = document.getElementById('chatMessages');
+        const msgEl = document.createElement('div');
+        msgEl.className = 'chat-message';
+        
+        const sideClass = getSideForPlayer(data.player_id);
+        msgEl.innerHTML = `
+          <div class="chat-author ${sideClass}">${data.nickname}</div>
+          <div class="chat-text">${escapeHtml(data.message)}</div>
+        `;
+        
+        messagesDiv.appendChild(msgEl);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+
+      function handleDrawOffered(data) {
+        document.getElementById('drawOfferModal').style.display = 'flex';
+      }
+
+      function handleDrawDeclined(data) {
+        showToast('무승부 제안이 거절되었습니다', 'error');
+      }
+
+      function handleRoomList(data) {
+        const listEl = document.getElementById('roomList');
+        
+        if (data.rooms.length === 0) {
+          listEl.innerHTML = '<div class="no-rooms">아직 대기중인 방이 없습니다</div>';
+          return;
+        }
+        
+        listEl.innerHTML = data.rooms.map(room => {
+          const hostPlayer = Object.values(room.players)[0];
+          return `
+            <div class="room-item">
+              <div class="room-info">
+                <div class="room-id">방 코드: ${room.room_id}</div>
+                <div class="room-details">
+                  호스트: ${hostPlayer?.nickname || '알 수 없음'} |
+                  시간: ${room.time_limit ? (room.time_limit / 60) + '분' : '무제한'}
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="quickJoinRoom('${room.room_id}')">입장</button>
+            </div>
+          `;
+        }).join('');
+      }
+
+      function handleError(data) {
+        showToast(data.message, 'error');
+      }
+
+      // ============================================
+      // UI Actions
+      // ============================================
+
+      function showModal(id) {
+        document.getElementById(id).style.display = 'flex';
+      }
+
+      function hideModal(id) {
+        document.getElementById(id).style.display = 'none';
+      }
+
+      function showCreateRoomModal() {
+        showModal('createRoomModal');
+        document.getElementById('createNickname').focus();
+      }
+
+      function showJoinRoomModal() {
+        showModal('joinRoomModal');
+        document.getElementById('joinNickname').focus();
+      }
+
+      function createRoom() {
+        nickname = document.getElementById('createNickname').value.trim() || `Player_${playerId.substring(0, 6)}`;
+        const timeLimit = document.getElementById('timeLimit').value;
+        
+        sendMessage({
+          type: 'create_room',
+          nickname: nickname,
+          time_limit: timeLimit ? parseInt(timeLimit) : null,
+        });
+        
+        hideModal('createRoomModal');
+      }
+
+      function joinRoomByCode() {
+        nickname = document.getElementById('joinNickname').value.trim() || `Player_${playerId.substring(0, 6)}`;
+        const roomCode = document.getElementById('joinRoomCode').value.trim().toUpperCase();
+        
+        if (!roomCode) {
+          showToast('방 코드를 입력해주세요', 'error');
+          return;
+        }
+        
+        sendMessage({
+          type: 'join_room',
+          nickname: nickname,
+          room_id: roomCode,
+        });
+        
+        hideModal('joinRoomModal');
+      }
+
+      function quickJoinRoom(roomId) {
+        nickname = prompt('닉네임을 입력하세요:', `Player_${playerId.substring(0, 6)}`);
+        if (!nickname) return;
+        
+        sendMessage({
+          type: 'join_room',
+          nickname: nickname,
+          room_id: roomId,
+        });
+      }
+
+      function refreshRooms() {
+        sendMessage({ type: 'get_rooms' });
+      }
+
+      function leaveRoom() {
+        if (gameInProgress && !confirm('게임 중입니다. 정말 나가시겠습니까?')) {
+          return;
+        }
+        sendMessage({ type: 'leave_room' });
+      }
+
+      function setFormation() {
+        const formation = document.getElementById('formationDropdown').value;
+        sendMessage({
+          type: 'set_formation',
+          formation: formation,
+        });
+      }
+
+      function toggleReady() {
+        isReady = !isReady;
+        sendMessage({
+          type: 'set_ready',
+          is_ready: isReady,
+        });
+        updateReadyButton();
+      }
+
+      function updateReadyButton() {
+        const btn = document.getElementById('readyBtn');
+        if (isReady) {
+          btn.textContent = '준비 취소';
+          btn.style.background = 'rgba(220, 53, 69, 0.3)';
+          btn.style.color = '#ff6b7a';
+        } else {
+          btn.textContent = '준비 완료';
+          btn.style.background = '';
+          btn.style.color = '';
+        }
+      }
+
+      function sendChat() {
+        const input = document.getElementById('chatInput');
+        const message = input.value.trim();
+        
+        if (!message) return;
+        
+        sendMessage({
+          type: 'chat',
+          message: message,
+        });
+        
+        input.value = '';
+      }
+
+      function handleChatKeypress(e) {
+        if (e.key === 'Enter') {
+          sendChat();
+        }
+      }
+
+      function offerDraw() {
+        if (confirm('무승부를 제안하시겠습니까?')) {
+          sendMessage({ type: 'offer_draw' });
+          showToast('무승부를 제안했습니다', 'info');
+        }
+      }
+
+      function respondDraw(accept) {
+        sendMessage({
+          type: 'respond_draw',
+          accept: accept,
+        });
+        hideModal('drawOfferModal');
+      }
+
+      function resign() {
+        if (confirm('정말 기권하시겠습니까?')) {
+          sendMessage({ type: 'resign' });
+        }
+      }
+
+      // ============================================
+      // View Management
+      // ============================================
+
+      function showLobbyView() {
+        document.getElementById('lobbyView').style.display = 'block';
+        document.getElementById('roomView').style.display = 'none';
+      }
+
+      function showRoomView() {
+        document.getElementById('lobbyView').style.display = 'none';
+        document.getElementById('roomView').style.display = 'block';
+        document.getElementById('chatMessages').innerHTML = '';
+      }
+
+      function updateRoomUI() {
+        if (!currentRoom) return;
+        
+        document.getElementById('roomCode').textContent = currentRoom.room_id;
+        
+        // Update player cards
+        const players = Object.values(currentRoom.players);
+        const choPlayer = players.find(p => p.side === 'CHO');
+        const hanPlayer = players.find(p => p.side === 'HAN');
+        
+        updatePlayerCard('cho', choPlayer);
+        updatePlayerCard('han', hanPlayer);
+        
+        // Flip board if I'm HAN
+        boardFlipped = myPlayerSide === 'HAN';
+        
+        // Draw board
+        drawBoard();
+      }
+
+      function updatePlayerCard(side, player) {
+        const card = document.getElementById(`${side}PlayerCard`);
+        const nicknameEl = document.getElementById(`${side}Nickname`);
+        const statusEl = document.getElementById(`${side}Status`);
+        
+        if (player) {
+          card.classList.remove('waiting');
+          nicknameEl.textContent = player.nickname + (player.player_id === playerId ? ' (나)' : '');
+          
+          if (player.is_ready) {
+            statusEl.textContent = '준비 완료';
+            statusEl.className = 'player-status ready';
+          } else {
+            statusEl.textContent = '준비 대기';
+            statusEl.className = 'player-status not-ready';
+          }
+        } else {
+          card.classList.add('waiting');
+          nicknameEl.textContent = '대기중...';
+          statusEl.textContent = '대기중';
+          statusEl.className = 'player-status not-ready';
+        }
+      }
+
+      function updateGameStatus() {
+        const statusEl = document.getElementById('gameStatus');
+        const isMyTurn = currentTurn === myPlayerSide;
+        const turnName = currentTurn === 'CHO' ? '초' : '한';
+        
+        statusEl.innerHTML = `
+          <span class="turn-indicator ${currentTurn.toLowerCase()}"></span>
+          ${turnName} 차례 ${isMyTurn ? '(내 차례)' : ''}
+        `;
+      }
+
+      function addSystemMessage(text) {
+        const messagesDiv = document.getElementById('chatMessages');
+        const msgEl = document.createElement('div');
+        msgEl.className = 'chat-message system';
+        msgEl.textContent = text;
+        messagesDiv.appendChild(msgEl);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+      }
+
+      // ============================================
+      // Board Drawing (Simplified)
+      // ============================================
+
+      function initializeBoard(choFormation, hanFormation) {
+        // Initialize starting position based on formations
+        boardData = createInitialBoard(choFormation, hanFormation);
+        currentTurn = 'CHO';
+        selectedSquare = null;
+        lastMoveFrom = null;
+        lastMoveTo = null;
+        drawBoard();
+      }
+
+      function createInitialBoard(choFormation, hanFormation) {
+        // Create 10x10 board array (rank 0-9, file 0-8)
+        const board = Array(10).fill(null).map(() => Array(9).fill(null));
+        
+        const formations = {
+          '상마상마': ['E', 'H', 'E', 'H'],
+          '마상마상': ['H', 'E', 'H', 'E'],
+          '마상상마': ['H', 'E', 'E', 'H'],
+          '상마마상': ['E', 'H', 'H', 'E'],
+        };
+        
+        const hanF = formations[hanFormation] || formations['마상상마'];
+        const choF = formations[choFormation] || formations['마상상마'];
+        
+        // HAN pieces (bottom, ranks 0-3)
+        board[0][0] = 'hR'; board[0][1] = 'h' + hanF[0]; board[0][2] = 'h' + hanF[1];
+        board[0][3] = 'hG'; board[0][5] = 'hG';
+        board[0][6] = 'h' + hanF[2]; board[0][7] = 'h' + hanF[3]; board[0][8] = 'hR';
+        board[1][4] = 'hK';
+        board[2][1] = 'hC'; board[2][7] = 'hC';
+        board[3][0] = 'hP'; board[3][2] = 'hP'; board[3][4] = 'hP';
+        board[3][6] = 'hP'; board[3][8] = 'hP';
+        
+        // CHO pieces (top, ranks 6-9)
+        board[9][0] = 'cR'; board[9][1] = 'c' + choF[0]; board[9][2] = 'c' + choF[1];
+        board[9][3] = 'cG'; board[9][5] = 'cG';
+        board[9][6] = 'c' + choF[2]; board[9][7] = 'c' + choF[3]; board[9][8] = 'cR';
+        board[8][4] = 'cK';
+        board[7][1] = 'cC'; board[7][7] = 'cC';
+        board[6][0] = 'cP'; board[6][2] = 'cP'; board[6][4] = 'cP';
+        board[6][6] = 'cP'; board[6][8] = 'cP';
+        
+        return board;
+      }
+
+      async function updateBoardFromServer() {
+        // For multiplayer, we need to sync board state
+        // This is a simplified version - in production you'd want full state sync
+        try {
+          const response = await fetch(`/api/board/mp_${currentRoom.room_id}`);
+          if (response.ok) {
+            const data = await response.json();
+            boardData = data.board;
+            boardKorean = data.board_korean;
+            legalMoves = data.legal_moves || [];
+            drawBoard();
+          }
+        } catch (e) {
+          // Fallback: just redraw with current state
+          drawBoard();
+        }
+      }
+
+      function drawBoard() {
+        // Clear canvas
+        ctx.fillStyle = COLORS.boardBg;
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        ctx.strokeStyle = COLORS.boardLine;
+        ctx.lineWidth = 1.5;
+
+        // Draw grid lines
+        for (let i = 0; i < 10; i++) {
+          const y = PADDING + i * CELL_HEIGHT;
+          ctx.beginPath();
+          ctx.moveTo(PADDING, y);
+          ctx.lineTo(CANVAS_WIDTH - PADDING, y);
+          ctx.stroke();
+        }
+
+        for (let i = 0; i < 9; i++) {
+          const x = PADDING + i * CELL_WIDTH;
+          ctx.beginPath();
+          ctx.moveTo(x, PADDING);
+          ctx.lineTo(x, CANVAS_HEIGHT - PADDING);
+          ctx.stroke();
+        }
+
+        // Draw palace diagonals
+        drawPalaceDiagonals();
+
+        // Draw highlights
+        drawHighlights();
+
+        // Draw pieces
+        drawPieces();
+      }
+
+      function drawPalaceDiagonals() {
+        const palaces = [
+          { corners: [[3, 9], [5, 9], [3, 7], [5, 7]] },
+          { corners: [[3, 2], [5, 2], [3, 0], [5, 0]] },
+        ];
+
+        palaces.forEach(palace => {
+          const c = palace.corners;
+          const tl = fileRankToPixel(c[0][0], c[0][1]);
+          const tr = fileRankToPixel(c[1][0], c[1][1]);
+          const bl = fileRankToPixel(c[2][0], c[2][1]);
+          const br = fileRankToPixel(c[3][0], c[3][1]);
+
+          ctx.beginPath();
+          ctx.moveTo(tl.x, tl.y);
+          ctx.lineTo(br.x, br.y);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(tr.x, tr.y);
+          ctx.lineTo(bl.x, bl.y);
+          ctx.stroke();
+        });
+      }
+
+      function drawHighlights() {
+        // Last move highlights
+        if (lastMoveFrom) {
+          const { x, y } = fileRankToPixel(lastMoveFrom.file, lastMoveFrom.rank);
+          ctx.fillStyle = COLORS.lastMoveFrom;
+          ctx.beginPath();
+          ctx.arc(x, y, PIECE_RADIUS + 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        if (lastMoveTo) {
+          const { x, y } = fileRankToPixel(lastMoveTo.file, lastMoveTo.rank);
+          ctx.fillStyle = COLORS.lastMoveTo;
+          ctx.beginPath();
+          ctx.arc(x, y, PIECE_RADIUS + 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Selected square
+        if (selectedSquare) {
+          const { x, y } = fileRankToPixel(selectedSquare.file, selectedSquare.rank);
+          ctx.strokeStyle = COLORS.selectedGlow;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(x, y, PIECE_RADIUS + 4, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
+      function drawPieces() {
+        if (!boardData || boardData.length === 0) return;
+
+        const pieceNames = {
+          'K': '왕', 'G': '사', 'E': '상', 'H': '마',
+          'R': '차', 'C': '포', 'P': '졸',
+        };
+
+        for (let rankIdx = 0; rankIdx < 10; rankIdx++) {
+          for (let fileIdx = 0; fileIdx < 9; fileIdx++) {
+            const piece = boardData[rankIdx]?.[fileIdx];
+            if (!piece) continue;
+
+            const rank = 9 - rankIdx;
+            const { x, y } = fileRankToPixel(fileIdx, rank);
+            const isHan = piece[0] === 'h';
+            const pieceType = piece[1];
+            const pieceName = pieceNames[pieceType] || '?';
+            const pieceColor = isHan ? COLORS.hanColor : COLORS.choColor;
+
+            // Draw piece base
+            ctx.fillStyle = '#faf6e8';
+            ctx.beginPath();
+            ctx.arc(x, y, PIECE_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.strokeStyle = pieceColor;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(x, y, PIECE_RADIUS - 1, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Draw piece character
+            ctx.fillStyle = pieceColor;
+            ctx.font = 'bold 22px "Noto Serif KR", serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(pieceName, x, y + 1);
+          }
+        }
+      }
+
+      function fileRankToPixel(file, rank) {
+        let displayFile = boardFlipped ? (8 - file) : file;
+        let displayRank = boardFlipped ? (9 - rank) : rank;
+        
+        const x = PADDING + displayFile * CELL_WIDTH;
+        const y = PADDING + (9 - displayRank) * CELL_HEIGHT;
+        return { x, y };
+      }
+
+      function pixelToFileRank(px, py) {
+        const displayFile = Math.round((px - PADDING) / CELL_WIDTH);
+        const rankFromTop = Math.round((py - PADDING) / CELL_HEIGHT);
+        let displayRank = 9 - rankFromTop;
+
+        const file = boardFlipped ? (8 - displayFile) : displayFile;
+        const rank = boardFlipped ? (9 - displayRank) : displayRank;
+
+        if (file >= 0 && file <= 8 && rank >= 0 && rank <= 9) {
+          return { file, rank };
+        }
+        return null;
+      }
+
+      // ============================================
+      // Board Interaction
+      // ============================================
+
+      canvas.addEventListener('click', (e) => {
+        if (!gameInProgress) return;
+        if (currentTurn !== myPlayerSide) {
+          showToast('상대방 차례입니다', 'error');
+          return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        const px = e.clientX - rect.left;
+        const py = e.clientY - rect.top;
+
+        const pos = pixelToFileRank(px, py);
+        if (!pos) return;
+
+        const { file, rank } = pos;
+        const piece = getPieceAt(file, rank);
+
+        if (selectedSquare) {
+          // Try to make move
+          if (file !== selectedSquare.file || rank !== selectedSquare.rank) {
+            makeMove(selectedSquare.file, selectedSquare.rank, file, rank);
+          }
+          selectedSquare = null;
+          drawBoard();
+        } else if (piece && isMyPiece(piece)) {
+          selectedSquare = { file, rank };
+          drawBoard();
+        }
+      });
+
+      function getPieceAt(file, rank) {
+        const rankIdx = 9 - rank;
+        return boardData[rankIdx]?.[file] || null;
+      }
+
+      function isMyPiece(piece) {
+        if (!piece) return false;
+        const pieceSide = piece[0] === 'h' ? 'HAN' : 'CHO';
+        return pieceSide === myPlayerSide;
+      }
+
+      function makeMove(fromFile, fromRank, toFile, toRank) {
+        const fromSquare = squareToNotation(fromFile, fromRank);
+        const toSquare = squareToNotation(toFile, toRank);
+
+        // Update local board state optimistically
+        const rankIdxFrom = 9 - fromRank;
+        const rankIdxTo = 9 - toRank;
+        const piece = boardData[rankIdxFrom][fromFile];
+        
+        if (piece) {
+          boardData[rankIdxTo][toFile] = piece;
+          boardData[rankIdxFrom][fromFile] = null;
+          
+          lastMoveFrom = { file: fromFile, rank: fromRank };
+          lastMoveTo = { file: toFile, rank: toRank };
+        }
+
+        // Send move to server
+        sendMessage({
+          type: 'make_move',
+          from_square: fromSquare,
+          to_square: toSquare,
+        });
+
+        drawBoard();
+      }
+
+      function squareToNotation(file, rank) {
+        return String.fromCharCode(97 + file) + (rank + 1);
+      }
+
+      function parseSquare(notation) {
+        const file = notation.charCodeAt(0) - 97;
+        const rank = parseInt(notation.slice(1)) - 1;
+        return { file, rank };
+      }
+
+      // ============================================
+      // Utility Functions
+      // ============================================
+
+      function getSideForPlayer(pid) {
+        if (!currentRoom) return '';
+        const player = currentRoom.players[pid];
+        return player?.side?.toLowerCase() || '';
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        toast.textContent = message;
+        container.appendChild(toast);
+
+        setTimeout(() => {
+          toast.style.animation = 'slideIn 0.3s ease-out reverse';
+          setTimeout(() => toast.remove(), 300);
+        }, 3000);
+      }
+
+      // ============================================
+      // Initialize
+      // ============================================
+
+      drawBoard();
+      initConnection();
+    </script>
+  </body>
+</html>
+

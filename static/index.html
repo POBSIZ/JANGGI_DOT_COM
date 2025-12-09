@@ -111,6 +111,28 @@
         box-shadow: 0 8px 25px rgba(220, 53, 69, 0.4);
       }
 
+      .multiplayer-btn {
+        padding: 14px 28px;
+        font-size: 15px;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        background: linear-gradient(135deg, #6c5ce7 0%, #5541d0 100%);
+        color: #ffffff;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        font-weight: 600;
+        letter-spacing: 1px;
+        box-shadow: 0 4px 15px rgba(108, 92, 231, 0.3);
+        text-decoration: none;
+        display: inline-block;
+      }
+
+      .multiplayer-btn:hover {
+        background: linear-gradient(135deg, #7c6cf7 0%, #6551e0 100%);
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(108, 92, 231, 0.4);
+      }
+
       .game-info {
         text-align: center;
         margin-bottom: 24px;
@@ -417,6 +439,137 @@
         padding: 24px;
         font-style: italic;
       }
+
+      .book-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        background: rgba(40, 167, 69, 0.15);
+        border: 1px solid rgba(40, 167, 69, 0.3);
+        border-radius: 20px;
+        font-size: 12px;
+        color: #5dd879;
+        margin-left: 12px;
+      }
+
+      .book-indicator.inactive {
+        background: rgba(138, 138, 154, 0.15);
+        border-color: rgba(138, 138, 154, 0.3);
+        color: #8a8a9a;
+      }
+
+      /* 모바일 반응형 디자인 */
+      @media (max-width: 768px) {
+        body {
+          padding: 10px;
+        }
+
+        .container {
+          padding: 16px;
+          border-radius: 16px;
+        }
+
+        h1 {
+          font-size: 1.6em;
+          margin-bottom: 16px;
+          letter-spacing: 2px;
+        }
+
+        .controls {
+          gap: 8px;
+          margin-bottom: 16px;
+        }
+
+        button {
+          padding: 10px 16px;
+          font-size: 13px;
+          border-radius: 8px;
+        }
+
+        .main-content {
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .board-wrapper {
+          padding: 10px;
+          border-radius: 12px;
+        }
+
+        #gameCanvas {
+          width: 100% !important;
+          height: auto !important;
+        }
+
+        .side-panel {
+          min-width: unset;
+          max-width: unset;
+          width: 100%;
+          padding: 16px;
+        }
+
+        .history-panel {
+          max-height: 200px;
+        }
+
+        .status {
+          padding: 12px 16px;
+          font-size: 14px;
+        }
+
+        .move-info {
+          padding: 10px 14px;
+          font-size: 13px;
+        }
+
+        .formation-option {
+          padding: 10px;
+        }
+
+        .formation-option strong {
+          font-size: 13px;
+        }
+
+        .formation-option small {
+          font-size: 11px;
+        }
+
+        .toast {
+          min-width: 250px;
+          max-width: 300px;
+          padding: 12px 16px;
+        }
+
+        .toast-container {
+          right: 10px;
+          top: 10px;
+        }
+      }
+
+      @media (max-width: 480px) {
+        h1 {
+          font-size: 1.3em;
+        }
+
+        .controls {
+          flex-direction: column;
+        }
+
+        button {
+          width: 100%;
+        }
+        
+        .controls-row {
+          display: flex;
+          gap: 8px;
+          width: 100%;
+        }
+        
+        .controls-row button {
+          flex: 1;
+        }
+      }
     </style>
   </head>
   <body>
@@ -427,13 +580,17 @@
         <button id="newGameBtn">새 게임</button>
         <button id="aiMoveBtn">AI 이동</button>
         <button id="autoPlayBtn" class="secondary">AI 자동 진행</button>
-        <button id="resetBtn">리셋</button>
+        <button id="undoBtn" class="secondary">되돌리기</button>
         <button id="setupBtn" class="secondary">상차림 설정</button>
         <button id="flipBoardBtn" class="secondary">보드 뒤집기</button>
+        <a href="/static/multiplayer.html" class="multiplayer-btn">🎮 멀티플레이어</a>
       </div>
 
       <div class="game-info">
         <div id="status" class="status info">게임을 시작하세요</div>
+        <span id="bookIndicator" class="book-indicator inactive" style="display: none;">
+          📖 정석북
+        </span>
       </div>
 
       <div class="main-content">
@@ -534,13 +691,16 @@
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
 
-      // Board dimensions
-      const CANVAS_WIDTH = 520;
-      const CANVAS_HEIGHT = 580;
-      const PADDING = 40;
-      const CELL_WIDTH = (CANVAS_WIDTH - PADDING * 2) / 8;
-      const CELL_HEIGHT = (CANVAS_HEIGHT - PADDING * 2) / 9;
-      const PIECE_RADIUS = 24;
+      // Board dimensions (base values, will be scaled for responsive)
+      const BASE_CANVAS_WIDTH = 520;
+      const BASE_CANVAS_HEIGHT = 580;
+      let CANVAS_WIDTH = BASE_CANVAS_WIDTH;
+      let CANVAS_HEIGHT = BASE_CANVAS_HEIGHT;
+      let PADDING = 40;
+      let CELL_WIDTH = (CANVAS_WIDTH - PADDING * 2) / 8;
+      let CELL_HEIGHT = (CANVAS_HEIGHT - PADDING * 2) / 9;
+      let PIECE_RADIUS = 24;
+      let scaleFactor = 1;
 
       // Game state
       let boardData = [];
@@ -556,6 +716,8 @@
       let mySide = "han"; // 내 진영: "cho" 또는 "han"
       let isGameOver = false; // 게임 종료 상태
       let isAutoPlaying = false; // AI 자동 진행 중 여부
+      let canUndo = false; // 수 되돌리기 가능 여부
+      let inOpeningBook = false; // 오프닝 북 상태
 
       // Animation state
       let animatingPiece = null;
@@ -618,6 +780,45 @@
         // Smooth start and end
         easeInOutQuad: (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,
       };
+
+      // ============================================
+      // Responsive canvas sizing
+      // ============================================
+
+      function resizeCanvas() {
+        const container = document.querySelector('.board-wrapper');
+        const maxWidth = Math.min(container.clientWidth - 40, BASE_CANVAS_WIDTH);
+        
+        // Only resize if significantly different (prevent constant redraws)
+        if (Math.abs(maxWidth - CANVAS_WIDTH) > 10) {
+          scaleFactor = maxWidth / BASE_CANVAS_WIDTH;
+          CANVAS_WIDTH = maxWidth;
+          CANVAS_HEIGHT = BASE_CANVAS_HEIGHT * scaleFactor;
+          PADDING = 40 * scaleFactor;
+          CELL_WIDTH = (CANVAS_WIDTH - PADDING * 2) / 8;
+          CELL_HEIGHT = (CANVAS_HEIGHT - PADDING * 2) / 9;
+          PIECE_RADIUS = 24 * scaleFactor;
+          
+          canvas.width = CANVAS_WIDTH;
+          canvas.height = CANVAS_HEIGHT;
+          canvas.style.width = CANVAS_WIDTH + 'px';
+          canvas.style.height = CANVAS_HEIGHT + 'px';
+          
+          // Redraw
+          if (boardData.length > 0) {
+            render(performance.now());
+          }
+        }
+      }
+
+      // Debounced resize handler
+      let resizeTimeout;
+      function handleResize() {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(resizeCanvas, 150);
+      }
+
+      window.addEventListener('resize', handleResize);
 
       // ============================================
       // Coordinate conversion functions
@@ -1351,6 +1552,14 @@
           // 게임 종료 상태 업데이트
           isGameOver = data.game_over || false;
           
+          // Undo 상태 업데이트
+          canUndo = data.can_undo || false;
+          updateUndoButton();
+          
+          // 오프닝 북 상태 업데이트
+          inOpeningBook = data.in_opening_book || false;
+          updateBookIndicator();
+          
           // 게임이 종료되면 AI 이동 버튼 비활성화 및 자동 진행 중지
           document.getElementById("aiMoveBtn").disabled = isGameOver;
           if (isGameOver && isAutoPlaying) {
@@ -1508,8 +1717,9 @@
                   showToast("무승부입니다!", "warning", 5000);
                 }
               } else {
+                const bookInfo = data.from_opening_book ? " 📖" : "";
                 document.getElementById("status").textContent = 
-                  `AI: ${data.move.from} → ${data.move.to} (${data.nodes_searched} nodes)`;
+                  `AI: ${data.move.from} → ${data.move.to} (${data.nodes_searched} nodes)${bookInfo}`;
                 document.getElementById("status").className = "status info";
               }
               
@@ -1578,6 +1788,84 @@
           btn.classList.add("secondary");
         }
         btn.disabled = isGameOver;
+      }
+
+      function updateUndoButton() {
+        const btn = document.getElementById("undoBtn");
+        btn.disabled = !canUndo || isAutoPlaying;
+      }
+
+      function updateBookIndicator() {
+        const indicator = document.getElementById("bookIndicator");
+        if (inOpeningBook) {
+          indicator.style.display = "inline-flex";
+          indicator.classList.remove("inactive");
+          indicator.innerHTML = "📖 정석북";
+        } else {
+          indicator.classList.add("inactive");
+          indicator.innerHTML = "📖 정석북 종료";
+          // 게임이 몇 수 진행됐을 때만 표시
+          if (boardData.length > 0) {
+            indicator.style.display = "inline-flex";
+          }
+        }
+      }
+
+      async function undoMove() {
+        if (!canUndo || isAutoPlaying) {
+          showToast("되돌릴 수 없습니다.", "warning");
+          return;
+        }
+
+        try {
+          // 두 수 되돌리기 (내 수 + AI 수)
+          const response = await fetch(`${API_BASE}/undo/${GAME_ID}`, {
+            method: "POST",
+          });
+
+          if (response.ok) {
+            clearSelection();
+            lastMoveFrom = null;
+            lastMoveTo = null;
+            await updateBoard();
+            showToast("수를 되돌렸습니다.", "success");
+          } else {
+            const error = await response.json();
+            showToast(`되돌리기 실패: ${error.detail}`, "error");
+          }
+        } catch (error) {
+          console.error("Failed to undo move:", error);
+          showToast("되돌리기 중 오류 발생", "error");
+        }
+      }
+
+      async function undoMovePair() {
+        if (!canUndo || isAutoPlaying) {
+          showToast("되돌릴 수 없습니다.", "warning");
+          return;
+        }
+
+        try {
+          // 두 수 되돌리기 (내 수 + AI 수)
+          const response = await fetch(`${API_BASE}/undo-pair/${GAME_ID}`, {
+            method: "POST",
+          });
+
+          if (response.ok) {
+            clearSelection();
+            lastMoveFrom = null;
+            lastMoveTo = null;
+            await updateBoard();
+            showToast("두 수를 되돌렸습니다.", "success");
+          } else {
+            // 한 수만 되돌리기 시도
+            await undoMove();
+          }
+        } catch (error) {
+          console.error("Failed to undo move pair:", error);
+          // 한 수만 되돌리기 시도
+          await undoMove();
+        }
       }
 
       function updateStatus(data) {
@@ -1868,7 +2156,7 @@
       document.getElementById("newGameBtn").addEventListener("click", () => initGame());
       document.getElementById("aiMoveBtn").addEventListener("click", aiMove);
       document.getElementById("autoPlayBtn").addEventListener("click", toggleAutoPlay);
-      document.getElementById("resetBtn").addEventListener("click", () => initGame());
+      document.getElementById("undoBtn").addEventListener("click", undoMovePair);
       document.getElementById("setupBtn").addEventListener("click", toggleSetupPanel);
       document.getElementById("applyFormationBtn").addEventListener("click", applyFormation);
       document.getElementById("flipBoardBtn").addEventListener("click", flipBoard);
@@ -1876,6 +2164,8 @@
       // Initialize on load
       updateFormationLabels();
       updateAutoPlayButton(); // 초기 버튼 상태 설정
+      updateUndoButton(); // 초기 undo 버튼 상태 설정
+      resizeCanvas(); // 초기 캔버스 크기 설정
       initGame();
     </script>
   </body>
