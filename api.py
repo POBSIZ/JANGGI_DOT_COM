@@ -33,7 +33,7 @@ app = FastAPI(title="Janggi AI Engine", lifespan=lifespan)
 
 
 # Default NNUE model path (can be overridden via environment variable)
-# Priority: env var > GPU model > CPU model
+# Priority: env var > GPU model > Smart model > CPU model > any other nnue model
 def _get_default_model_path():
     """Get the best available NNUE model path."""
     env_path = os.environ.get("NNUE_MODEL_PATH")
@@ -44,9 +44,21 @@ def _get_default_model_path():
     if os.path.exists("models/nnue_gpu_model.json"):
         return "models/nnue_gpu_model.json"
 
+    # Prefer smart-trained model if available
+    if os.path.exists("models/nnue_smart_model.json"):
+        return "models/nnue_smart_model.json"
+
     # Fallback to CPU model
     if os.path.exists("models/nnue_model.json"):
         return "models/nnue_model.json"
+
+    # Last resort: find any nnue model in models directory
+    if os.path.exists("models"):
+        for file in os.listdir("models"):
+            if file.endswith(".json") and "nnue" in file.lower():
+                model_path = os.path.join("models", file)
+                if os.path.exists(model_path):
+                    return model_path
 
     return None
 
@@ -280,7 +292,7 @@ async def new_game(request: NewGameRequest, req: Request):
         # Use provided path, or default path if it exists
         if request.nnue_model_path:
             nnue_model_path = request.nnue_model_path
-        elif os.path.exists(DEFAULT_NNUE_MODEL_PATH):
+        elif DEFAULT_NNUE_MODEL_PATH and os.path.exists(DEFAULT_NNUE_MODEL_PATH):
             nnue_model_path = DEFAULT_NNUE_MODEL_PATH
 
     engine = Engine(
@@ -723,7 +735,7 @@ async def get_model_info():
     models = []
 
     # Check default model
-    if os.path.exists(DEFAULT_NNUE_MODEL_PATH):
+    if DEFAULT_NNUE_MODEL_PATH and os.path.exists(DEFAULT_NNUE_MODEL_PATH):
         models.append(
             {"path": DEFAULT_NNUE_MODEL_PATH, "is_default": True, "exists": True}
         )
@@ -736,12 +748,12 @@ async def get_model_info():
     models_dir = "models"
     if os.path.exists(models_dir):
         for file in os.listdir(models_dir):
+            model_path = os.path.join(models_dir, file)
             if (
                 file.endswith(".json")
-                and os.path.join(models_dir, file) != DEFAULT_NNUE_MODEL_PATH
+                and (DEFAULT_NNUE_MODEL_PATH is None or model_path != DEFAULT_NNUE_MODEL_PATH)
                 and "nnue" in file.lower()
             ):
-                model_path = os.path.join(models_dir, file)
                 models.append({"path": model_path, "is_default": False, "exists": True})
 
     return {"default_model_path": DEFAULT_NNUE_MODEL_PATH, "models": models}
