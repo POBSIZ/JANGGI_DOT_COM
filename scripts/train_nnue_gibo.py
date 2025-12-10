@@ -111,6 +111,18 @@ class GibParser:
         '包': PieceType.CANNON,  # 포
     }
     
+    # 한글 기물 → 한자 기물 매핑
+    KOREAN_TO_HANJA = {
+        '졸': '卒',
+        '병': '兵',
+        '마': '馬',
+        '상': '象',
+        '사': '士',
+        '장': '將',
+        '차': '車',
+        '포': '包',
+    }
+    
     # 차림 이름 매핑
     FORMATION_MAP = {
         '상마상마': '상마상마',
@@ -176,15 +188,27 @@ class GibParser:
         games = []
         
         try:
-            # Try EUC-KR encoding first
+            # Read file as bytes (to handle 0xff characters)
             with open(filepath, 'rb') as f:
-                raw = f.read()
+                file_bytes = f.read()
             
-            # Try different encodings
+            # Remove 0xff characters (as per reference implementation)
+            ff_indices = [i for i, val in enumerate(file_bytes) if val == 0xff]
+            if len(ff_indices) == 0:
+                fixed_bytes = file_bytes
+            else:
+                fixed_bytes = b''
+                ff_indices += [len(file_bytes)]  # Add last index
+                i_start = 0
+                for i in ff_indices:
+                    fixed_bytes += file_bytes[i_start:i]
+                    i_start = i + 1  # Skip 0xff
+            
+            # Try different encodings (cp949 preferred as per reference)
             content = None
-            for encoding in SUPPORTED_ENCODINGS:
+            for encoding in ['cp949', 'euc-kr'] + SUPPORTED_ENCODINGS:
                 try:
-                    content = raw.decode(encoding, errors='replace')
+                    content = fixed_bytes.decode(encoding, errors='replace')
                     break
                 except Exception:
                     continue
@@ -230,33 +254,52 @@ class GibParser:
         
         lines = block.split('\n')
         moves_text = []
+        comment_found = False
         
         for line in lines:
+            # Handle comments (as per reference implementation)
+            if '{' in line:
+                comment_found = True
+            
+            if comment_found:
+                if '}' in line:
+                    comment_found = False
+                continue
+            
+            # Remove 0x1a character
+            line = line.replace('\x1a', '')
             line = line.strip()
             
-            if line.startswith('[초차림'):
-                match = re.search(r'"([^"]+)"', line)
-                if match:
-                    formation = match.group(1)
-                    game['cho_formation'] = self.FORMATION_MAP.get(formation, formation)
+            # Empty line indicates end of game info
+            if line == '':
+                continue
             
-            elif line.startswith('[한차림'):
-                match = re.search(r'"([^"]+)"', line)
-                if match:
-                    formation = match.group(1)
-                    game['han_formation'] = self.FORMATION_MAP.get(formation, formation)
+            # Parse metadata
+            if line.startswith('['):
+                # Extract key and value from [key "value"] format
+                if ' ' in line and '"' in line:
+                    key_start = 1
+                    key_end = line.index(' ')
+                    value_start = line.index('"') + 1
+                    value_end = -line[::-1].index('"') - 1
+                    key = line[key_start:key_end]
+                    value = line[value_start:value_end]
+                    
+                    if key == '초차림' or key == '초포진':
+                        formation = self.FORMATION_MAP.get(value, value)
+                        game['cho_formation'] = formation
+                    elif key == '한차림' or key == '한포진':
+                        formation = self.FORMATION_MAP.get(value, value)
+                        game['han_formation'] = formation
+                    elif key == '대국결과':
+                        if '초' in value and ('승' in value or '완' in value or '楚' in value):
+                            game['result'] = 'cho'
+                        elif '한' in value and ('승' in value or '완' in value or '漢' in value):
+                            game['result'] = 'han'
+                        else:
+                            game['result'] = 'draw'
             
-            elif line.startswith('[대국결과'):
-                match = re.search(r'"([^"]+)"', line)
-                if match:
-                    result_text = match.group(1)
-                    if '초' in result_text and ('승' in result_text or '완' in result_text):
-                        game['result'] = 'cho'
-                    elif '한' in result_text and ('승' in result_text or '완' in result_text):
-                        game['result'] = 'han'
-                    else:
-                        game['result'] = 'draw'
-            
+            # Parse moves (lines starting with numbers)
             elif re.match(r'^\d+\.', line):
                 moves_text.append(line)
         
@@ -269,23 +312,92 @@ class GibParser:
     def _extract_raw_moves(self, moves_text: str) -> List[Tuple[str, Optional[str], str, Optional[str]]]:
         """Extract raw move data: (from_coord, piece_char, to_coord, side_indicator)
         
-        Supports two gibo formats:
-        1. Without side prefix: 79卒78 (숫자-기물-숫자)
-        2. With side prefix: 41漢兵42 (숫자-진영-기물-숫자)
-           - 漢 (Han) or 楚 (Cho) indicates which side's piece
+        Supports multiple gibo formats:
+        1. Korean format: 08마87 (숫자-한글기물-숫자)
+        2. Chinese format: 79卒78 (숫자-한자기물-숫자)
+        3. With side prefix: 41漢兵42 (숫자-진영-기물-숫자)
+        4. Skip move: 한수쉼
+        
+        Based on reference implementation from:
+        https://github.com/ladofa/janggi/blob/master/python_tf/gibo.py
         
         Returns: (from_coord, piece_char, to_coord, side_indicator)
         """
         moves = []
-        # Pattern supports optional side indicator (漢/楚) before piece type
-        move_pattern = r'(\d{2})([漢楚])?([卒兵馬象士將車包])?(\d{2})'
         
-        for match in re.finditer(move_pattern, moves_text):
-            from_pos = match.group(1)
-            side_indicator = match.group(2)  # 漢 or 楚
-            piece = match.group(3)
-            to_pos = match.group(4)
-            moves.append((from_pos, piece, to_pos, side_indicator))
+        # Split by move numbers (e.g., "1. 08마87 2. 12마33")
+        words_pre = moves_text.split(' ')
+        # Remove words with '<' (like <0>)
+        words = [w for w in words_pre if '<' not in w]
+        
+        i = 0
+        while i < len(words):
+            # Skip move numbers (e.g., "1.", "2.")
+            if re.match(r'^\d+\.?$', words[i]):
+                i += 1
+                continue
+            
+            # Check for skip move
+            if words[i] == '한수쉼':
+                # Skip move - add empty move
+                moves.append(('00', None, '00', None))
+                i += 1
+                continue
+            
+            # Parse move: from_coord + piece + to_coord
+            word_move = words[i]
+            
+            # Extract from position (first 2 digits)
+            if len(word_move) < 2 or not word_move[0].isdigit():
+                i += 1
+                continue
+            
+            # Parse coordinates (as per reference implementation)
+            # word_move[0] = fy (row), word_move[1] = fx (col)
+            # Keep original string format for coordinates
+            from_coord = word_move[0:2]
+            
+            # Find next digit position (for to_coord)
+            number_pos = 2
+            while number_pos < len(word_move) and not word_move[number_pos].isdigit():
+                number_pos += 1
+            
+            if number_pos >= len(word_move) or number_pos + 1 >= len(word_move):
+                i += 1
+                continue
+            
+            # Extract to position (next 2 digits)
+            to_coord = word_move[number_pos:number_pos+2]
+            
+            # Extract piece character (between coordinates)
+            piece_char = None
+            side_indicator = None
+            
+            # Look for piece characters between coordinates
+            piece_text = word_move[2:number_pos] if number_pos > 2 else ''
+            
+            # Check for side indicator (漢/楚)
+            if '漢' in piece_text:
+                side_indicator = '漢'
+                piece_text = piece_text.replace('漢', '')
+            elif '楚' in piece_text:
+                side_indicator = '楚'
+                piece_text = piece_text.replace('楚', '')
+            
+            # Convert Korean piece to Chinese if needed
+            if piece_text:
+                # Check if it's Korean piece
+                if piece_text in self.KOREAN_TO_HANJA:
+                    piece_char = self.KOREAN_TO_HANJA[piece_text]
+                # Check if it's already Chinese piece
+                elif piece_text in self.HANJA_TO_PIECE:
+                    piece_char = piece_text
+                # Single character might be piece
+                elif len(piece_text) == 1:
+                    piece_char = piece_text
+            
+            moves.append((from_coord, piece_char, to_coord, side_indicator))
+            i += 1
         
         return moves
     
@@ -496,8 +608,25 @@ def _detect_coordinate_transformation(board: Board, raw_moves: List[Tuple], samp
             from_coord, piece_char, to_coord = move_data
             side_indicator = None
         
-        gibo_row, gibo_col = int(from_coord[0]), int(from_coord[1])
-        gibo_row2, gibo_col2 = int(to_coord[0]), int(to_coord[1])
+        # Parse coordinates as per reference implementation
+        # word_move[0] = fy (row), word_move[1] = fx (col)
+        try:
+            gibo_row = int(from_coord[0]) - 1
+            gibo_col = int(from_coord[1]) - 1
+            gibo_row2 = int(to_coord[0]) - 1
+            gibo_col2 = int(to_coord[1]) - 1
+            
+            # Handle -1 (becomes 9 or 8) as per reference implementation
+            if gibo_row == -1:
+                gibo_row = 9
+            if gibo_col == -1:
+                gibo_col = 8
+            if gibo_row2 == -1:
+                gibo_row2 = 9
+            if gibo_col2 == -1:
+                gibo_col2 = 8
+        except (ValueError, IndexError):
+            continue
         
         # 진영 정보
         expected_side = None
@@ -603,8 +732,25 @@ def _find_valid_move_helper(board: Board, from_coord: str, to_coord: str,
     """
     # 3차 개정 좌표(신좌표) 파싱: 두 자리 숫자
     # XY 형식에서 X=행(0-9), Y=열(1-9)
-    gibo_row, gibo_col = int(from_coord[0]), int(from_coord[1])
-    gibo_row2, gibo_col2 = int(to_coord[0]), int(to_coord[1])
+    # 참고 문서 방식: word_move[0] = fy, word_move[1] = fx
+    # -1을 9나 8로 변환하는 로직 포함
+    try:
+        gibo_row = int(from_coord[0]) - 1
+        gibo_col = int(from_coord[1]) - 1
+        gibo_row2 = int(to_coord[0]) - 1
+        gibo_col2 = int(to_coord[1]) - 1
+        
+        # Handle -1 (becomes 9 or 8) as per reference implementation
+        if gibo_row == -1:
+            gibo_row = 9
+        if gibo_col == -1:
+            gibo_col = 8
+        if gibo_row2 == -1:
+            gibo_row2 = 9
+        if gibo_col2 == -1:
+            gibo_col2 = 8
+    except (ValueError, IndexError):
+        return None
     
     # 선호하는 변환이 있으면 먼저 시도 (하지만 실패하면 다른 변환도 시도)
     tried_preferred = False
