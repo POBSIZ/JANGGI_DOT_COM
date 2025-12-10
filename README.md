@@ -27,7 +27,6 @@ npm run dev
 - **[시작 가이드](docs/getting-started/README.md)** - 설치 및 기본 사용법
 - **[학습 가이드](docs/training/guide.md)** - NNUE 모델 학습 방법
 - **[모델 사용](docs/models/usage.md)** - 학습된 모델 사용법
-- **[AWS EC2 배포 가이드](docs/deployment/aws-ec2.md)** - AWS EC2에 API 서버 배포하기
 - **[장기 규칙](docs/rules/korean.md)** - 한국 장기 규칙 (한국어)
 - **[Janggi Rules](docs/rules/english.md)** - Korean Janggi Rules (English)
 
