@@ -4,6 +4,13 @@
 
 ## 문서 목록
 
+### 구현 가이드
+- **[implementation-guide.md](implementation-guide.md)** - 프로젝트 구현 방법, 순서, 원리 설명
+  - 프로젝트 구조
+  - 핵심 컴포넌트 설명
+  - 구현 순서
+  - 알고리즘 원리
+
 ### 일반 개선사항
 - **[improvements.md](improvements.md)** - 장기 AI 엔진 개선점
   - AI 엔진 개선
