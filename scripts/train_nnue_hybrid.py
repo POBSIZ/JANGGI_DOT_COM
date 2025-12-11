@@ -15,8 +15,11 @@ Usage:
 """
 
 import argparse
+import glob
+import json
 import os
-from typing import Optional
+import re
+from typing import Optional, Dict, Any
 
 try:
     import torch
@@ -32,6 +35,80 @@ if TORCH_AVAILABLE:
         DataGenerator, GPUTrainer, evaluate_model,
         MAX_MOVES_PER_GAME
     )
+
+
+def get_metadata_path(model_path: str) -> str:
+    """Get metadata file path for a model file.
+    
+    Args:
+        model_path: Path to model file (e.g., "models/nnue_hybrid_iter_3.json")
+        
+    Returns:
+        Path to metadata file (e.g., "models/nnue_hybrid_iter_3_meta.json")
+    """
+    base, ext = os.path.splitext(model_path)
+    return f"{base}_meta.json"
+
+
+def save_metadata(model_path: str, metadata: Dict[str, Any]):
+    """Save training metadata to a separate file.
+    
+    Args:
+        model_path: Path to model file
+        metadata: Dictionary containing training metadata
+    """
+    metadata_path = get_metadata_path(model_path)
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+
+
+def load_metadata(model_path: str) -> Optional[Dict[str, Any]]:
+    """Load training metadata from file.
+    
+    Args:
+        model_path: Path to model file
+        
+    Returns:
+        Metadata dictionary if exists, None otherwise
+    """
+    metadata_path = get_metadata_path(model_path)
+    if os.path.exists(metadata_path):
+        try:
+            with open(metadata_path, 'r') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Could not load metadata from {metadata_path}: {e}")
+            return None
+    return None
+
+
+def find_last_iteration_from_history(output_dir: str, base_name: str = "nnue_hybrid_iter") -> int:
+    """Find the last completed iteration by checking history files.
+    
+    Args:
+        output_dir: Directory containing model files
+        base_name: Base name for iteration files
+        
+    Returns:
+        Last completed iteration number (0 if none found)
+    """
+    # Look for history files to determine last iteration
+    history_pattern = os.path.join(output_dir, f"{base_name}_*_step*_history.json")
+    history_files = glob.glob(history_pattern)
+    
+    if not history_files:
+        return 0
+    
+    max_iteration = 0
+    for history_file in history_files:
+        # Extract iteration number from filename
+        # Format: nnue_hybrid_iter_{N}_step{M}_history.json
+        match = re.search(rf"{base_name}_(\d+)_step", history_file)
+        if match:
+            iteration = int(match.group(1))
+            max_iteration = max(max_iteration, iteration)
+    
+    return max_iteration
 
 
 def train_from_selfplay(
@@ -118,7 +195,9 @@ def hybrid_training(
     use_parallel: bool = True,
     num_workers: Optional[int] = None,
     eval_batch_size: Optional[int] = None,
-    eval_num_workers: Optional[int] = None
+    eval_num_workers: Optional[int] = None,
+    start_iteration: int = 0,
+    base_learning_rate: Optional[float] = None
 ) -> 'NNUETorch':
     """Hybrid training combining gibo and self-play.
     
@@ -137,7 +216,7 @@ def hybrid_training(
         fine_tune_epochs: Epochs for fine-tuning with gibo
         selfplay_games: Number of self-play games per iteration
         batch_size: Batch size for training
-        learning_rate: Base learning rate
+        learning_rate: Base learning rate (or current learning rate if resuming)
         positions_per_game: Max positions per gibo game
         search_depth: Search depth for self-play
         output_dir: Directory to save models
@@ -145,6 +224,8 @@ def hybrid_training(
         num_workers: Number of workers for parallel processing
         eval_batch_size: Batch size for GPU evaluation
         eval_num_workers: Number of workers for evaluation
+        start_iteration: Starting iteration number (for resuming training)
+        base_learning_rate: Original base learning rate (for proper decay calculation)
         
     Returns:
         Trained NNUE model
@@ -152,14 +233,29 @@ def hybrid_training(
     os.makedirs(output_dir, exist_ok=True)
     
     # Learning rate decay over iterations
-    base_lr = learning_rate
+    # If resuming, use the original base_lr for proper decay calculation
+    if base_learning_rate is not None:
+        base_lr = base_learning_rate
+    else:
+        base_lr = learning_rate
     
-    for iteration in range(iterations):
+    # Adjust iteration range if resuming from a previous training
+    actual_iterations = iterations - start_iteration
+    if actual_iterations <= 0:
+        print(f"⚠️ Warning: Already completed {start_iteration} iterations. Nothing to train.")
+        return nnue
+    
+    if start_iteration > 0:
+        print(f"\n📌 Resuming training from iteration {start_iteration + 1}")
+        print(f"   Will train {actual_iterations} more iterations (total: {iterations})")
+    
+    for i in range(actual_iterations):
+        iteration = start_iteration + i
         print(f"\n{'='*70}")
         print(f"HYBRID TRAINING ITERATION {iteration + 1}/{iterations}")
         print(f"{'='*70}")
         
-        # Decay learning rate
+        # Decay learning rate based on actual iteration number
         current_lr = base_lr * (0.8 ** iteration)
         print(f"Learning rate: {current_lr:.6f}")
         
@@ -224,7 +320,23 @@ def hybrid_training(
         # Save checkpoint
         checkpoint_path = os.path.join(output_dir, f"nnue_hybrid_iter_{iteration + 1}.json")
         nnue.save(checkpoint_path)
+        
+        # Save metadata
+        metadata = {
+            "last_iteration": iteration + 1,
+            "total_iterations": iterations,
+            "base_learning_rate": base_lr,
+            "last_learning_rate": current_lr,
+            "last_fine_tune_learning_rate": current_lr * 0.5,
+            "gibo_epochs": gibo_epochs,
+            "selfplay_epochs": selfplay_epochs,
+            "fine_tune_epochs": fine_tune_epochs,
+            "batch_size": batch_size,
+            "search_depth": search_depth
+        }
+        save_metadata(checkpoint_path, metadata)
         print(f"\nSaved checkpoint: {checkpoint_path}")
+        print(f"Saved metadata: {get_metadata_path(checkpoint_path)}")
         
         # Step 4: Evaluate
         print(f"\n{'─'*70}")

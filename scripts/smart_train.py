@@ -28,6 +28,7 @@ import platform
 import time
 import glob
 import multiprocessing as mp
+from datetime import datetime
 from typing import Dict, Tuple, Optional, Any
 from dataclasses import dataclass
 from enum import Enum
@@ -721,27 +722,35 @@ def _adjust_config_for_cpu(config: Dict, info: SystemInfo) -> Dict:
 
 
 def get_unique_output_path(base_path: str) -> str:
-    """중복되지 않는 출력 파일 경로 생성.
+    """날짜+시간이 포함된 중복되지 않는 출력 파일 경로 생성.
     
     Args:
         base_path: 기본 파일 경로 (예: "models/nnue_smart_model.json")
         
     Returns:
-        중복되지 않는 파일 경로 (예: "models/nnue_smart_model.json" 또는 
-        "models/nnue_smart_model_1.json")
+        날짜+시간이 포함된 파일 경로 (예: "models/2025-12-11_14_30_nnue_smart_model.json" 또는 
+        "models/2025-12-11_14_30_nnue_smart_model_1.json")
     """
-    if not os.path.exists(base_path):
-        return base_path
+    # 현재 날짜와 시간 가져오기 (YYYY-MM-DD_HH_mm 형식)
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H_%M")
     
     # 파일 경로 분리
     directory = os.path.dirname(base_path)
     filename = os.path.basename(base_path)
     name, ext = os.path.splitext(filename)
     
+    # 날짜+시간을 파일명 앞에 추가
+    timestamped_filename = f"{timestamp}_{name}{ext}"
+    timestamped_path = os.path.join(directory, timestamped_filename)
+    
+    # 만약 같은 시간에 저장된 파일이 이미 있으면 번호 추가
+    if not os.path.exists(timestamped_path):
+        return timestamped_path
+    
     # 번호를 추가하여 중복되지 않는 파일명 찾기
     counter = 1
     while True:
-        new_filename = f"{name}_{counter}{ext}"
+        new_filename = f"{timestamp}_{name}_{counter}{ext}"
         new_path = os.path.join(directory, new_filename)
         if not os.path.exists(new_path):
             return new_path
@@ -917,14 +926,57 @@ def train_with_gpu(config: TrainingConfig, load_model: Optional[str] = None, gib
         print(f"📊 GPU 메모리 기반 최적 평가 배치 크기: {eval_batch_size}")
     
     # 모델 초기화 또는 로드
+    training_metadata = None
+    start_iteration = 0
+    base_learning_rate = None
+    
     if load_model:
         print(f"📂 모델 로드: {load_model}")
         nnue = NNUETorch.from_file(load_model, device=device)
+        
+        # Try to load metadata for resuming training
+        try:
+            from scripts.train_nnue_hybrid import load_metadata, find_last_iteration_from_history
+            
+            # First try to load from metadata file
+            training_metadata = load_metadata(load_model)
+            
+            if training_metadata:
+                start_iteration = training_metadata.get("last_iteration", 0)
+                base_learning_rate = training_metadata.get("base_learning_rate")
+                last_lr = training_metadata.get("last_learning_rate")
+                
+                print(f"📊 학습 메타데이터 발견:")
+                print(f"   - 마지막 iteration: {start_iteration}")
+                if base_learning_rate:
+                    print(f"   - 원래 base learning rate: {base_learning_rate:.6f}")
+                if last_lr:
+                    print(f"   - 마지막 learning rate: {last_lr:.6f}")
+                
+                if start_iteration > 0:
+                    print(f"   ✅ Iteration {start_iteration}부터 계속 학습합니다")
+            else:
+                # Fallback: try to find from history files
+                import os
+                output_dir = os.path.dirname(load_model) or "models"
+                last_iter = find_last_iteration_from_history(output_dir)
+                if last_iter > 0:
+                    start_iteration = last_iter
+                    print(f"📊 히스토리 파일에서 마지막 iteration {start_iteration} 발견")
+                    print(f"   ⚠️ 메타데이터 파일이 없어서 히스토리 파일로 추정했습니다")
+        except Exception as e:
+            print(f"⚠️ 메타데이터 로드 실패: {e}")
+            print("   새로 학습을 시작합니다")
     else:
         print("🆕 새 모델 초기화")
         nnue = NNUETorch(device=device)
     
     # Phase 3: 혼합 학습 모드
+    # 변수 초기화 (스코프 문제 해결)
+    gibo_epochs = 0
+    selfplay_epochs = 0
+    fine_tune_epochs = 0
+    
     if config.use_hybrid:
         try:
             from scripts.train_nnue_hybrid import hybrid_training
@@ -949,23 +1001,45 @@ def train_with_gpu(config: TrainingConfig, load_model: Optional[str] = None, gib
             print(f"   - Fine-tuning: {fine_tune_epochs} epochs/iteration")
             
             # 혼합 학습 실행
+            # If resuming, adjust iterations and use proper base learning rate
+            total_iterations = config.iterations
+            if start_iteration > 0:
+                # Continue from where we left off
+                remaining_iterations = total_iterations - start_iteration
+                if remaining_iterations > 0:
+                    print(f"   - 남은 iteration: {remaining_iterations}회 (총 {total_iterations}회 중 {start_iteration}회 완료)")
+                    # Use the original base learning rate for proper decay
+                    actual_base_lr = base_learning_rate if base_learning_rate else config.learning_rate
+                    actual_lr = actual_base_lr * (0.8 ** start_iteration) if base_learning_rate else config.learning_rate
+                else:
+                    print(f"   ⚠️ 이미 {start_iteration}회 iteration을 완료했습니다. 추가 학습을 진행합니다.")
+                    remaining_iterations = config.iterations
+                    actual_base_lr = base_learning_rate if base_learning_rate else config.learning_rate
+                    actual_lr = config.learning_rate
+            else:
+                remaining_iterations = config.iterations
+                actual_base_lr = config.learning_rate
+                actual_lr = config.learning_rate
+            
             nnue = hybrid_training(
                 gibo_dir=gibo_dir,
                 nnue=nnue,
-                iterations=config.iterations,
+                iterations=total_iterations,  # Total iterations (for proper numbering)
                 gibo_epochs=gibo_epochs,
                 selfplay_epochs=selfplay_epochs,
                 fine_tune_epochs=fine_tune_epochs,
                 selfplay_games=selfplay_games,
                 batch_size=config.batch_size,
-                learning_rate=config.learning_rate,
+                learning_rate=actual_lr,  # Current learning rate
                 positions_per_game=50,
                 search_depth=config.search_depth,
                 output_dir="models",
                 use_parallel=config.use_parallel,
                 num_workers=config.num_workers if config.use_parallel else None,
                 eval_batch_size=eval_batch_size,
-                eval_num_workers=config.num_workers if config.use_parallel else None
+                eval_num_workers=config.num_workers if config.use_parallel else None,
+                start_iteration=start_iteration,  # Start from this iteration
+                base_learning_rate=actual_base_lr  # Original base LR for decay calculation
             )
             
             history = {"train_loss": [], "val_loss": []}  # 혼합 학습은 별도 출력
@@ -1096,6 +1170,48 @@ def train_with_gpu(config: TrainingConfig, load_model: Optional[str] = None, gib
         base_path = "models/nnue_smart_model.json"
     output_path = get_unique_output_path(base_path)
     nnue.save(output_path)
+    
+    # 메타데이터 저장 (hybrid training이 아닌 경우에도)
+    try:
+        from scripts.train_nnue_hybrid import save_metadata, get_metadata_path
+        
+        # Hybrid training의 경우 이미 메타데이터가 저장되어 있지만,
+        # 최종 모델에도 메타데이터를 저장
+        if config.use_hybrid:
+            # Hybrid training의 경우, 마지막 iteration 정보를 가져옴
+            final_base_lr = base_learning_rate if 'base_learning_rate' in locals() and base_learning_rate else config.learning_rate
+            metadata = {
+                "training_method": "hybrid",
+                "total_iterations": config.iterations,
+                "last_iteration": config.iterations,  # 최종 모델이므로 모든 iteration 완료
+                "base_learning_rate": final_base_lr,
+                "final_learning_rate": config.learning_rate,
+                "gibo_epochs": gibo_epochs,
+                "selfplay_epochs": selfplay_epochs,
+                "fine_tune_epochs": fine_tune_epochs,
+                "batch_size": config.batch_size,
+                "search_depth": config.search_depth,
+                "positions": config.positions,
+                "epochs": config.epochs
+            }
+        else:
+            # 일반 학습의 경우
+            metadata = {
+                "training_method": config.method,
+                "base_learning_rate": config.learning_rate,
+                "final_learning_rate": config.learning_rate,
+                "batch_size": config.batch_size,
+                "search_depth": config.search_depth,
+                "positions": config.positions,
+                "epochs": config.epochs,
+                "iterations": config.iterations if config.iterations > 1 else 1
+            }
+        
+        save_metadata(output_path, metadata)
+        print(f"💾 메타데이터 저장: {get_metadata_path(output_path)}")
+    except Exception as e:
+        print(f"⚠️ 메타데이터 저장 실패: {e}")
+    
     print(f"\n💾 모델 저장: {output_path}")
     
     return nnue, history, output_path
